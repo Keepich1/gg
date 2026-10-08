@@ -1,0 +1,8 @@
+{
+  "name": "ordo-battle-prototype",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "balance": "node tools/balance.js 20"
+  }
+}

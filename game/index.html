@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!--ARTIFACT-START-->
+<title>Ордо: поле боя</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alegreya+SC:wght@700;800&family=PT+Sans+Narrow:wght@400;700&display=swap">
+<style>
+  :root {
+    color-scheme: dark;
+    --ink: #0d1019; --panel: rgba(13, 16, 26, .88); --line: rgba(239, 228, 204, .14);
+    --cream: #efe4cc; --dim: #a9a291; --gold: #d9a23b; --good: #7cc46b; --bad: #e0645a;
+    --me: #2f8f74; --me-light: #7fe8c8; --foe: #b0392f;
+    --display: 'Alegreya SC', 'Palatino Linotype', Georgia, serif;
+    --ui: 'PT Sans Narrow', 'Arial Narrow', 'Roboto Condensed', sans-serif;
+  }
+  html, body { height: 100%; margin: 0; overflow: hidden; background: var(--ink); color: var(--cream); font-family: var(--ui); font-size: 15px; }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+  kbd { font: 700 11px var(--ui); padding: 1px 5px; border-radius: 4px; background: rgba(255,255,255,.1); border: 1px solid var(--line); margin-left: 4px; }
+  #app { position: fixed; inset: 0; }
+  #view { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  #selbox { position: absolute; display: none; border: 1px dashed #fff6c8; background: rgba(255, 246, 200, .08); pointer-events: none; }
+
+  .top {
+    position: absolute; top: 0; left: 0; right: 0; height: 46px; padding-inline: 16px;
+    display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 16px;
+    background: linear-gradient(rgba(10, 12, 20, .85), rgba(10, 12, 20, 0)); pointer-events: none;
+  }
+  .top > * { pointer-events: auto; }
+  .title { font: 800 21px var(--display); letter-spacing: .06em; color: var(--gold); white-space: nowrap; }
+  .title span { font: 400 14px var(--ui); letter-spacing: 0; color: var(--dim); margin-left: 8px; }
+  .strength { display: flex; align-items: center; gap: 10px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .strength .fname { font: 700 16px var(--display); }
+  .bars { width: 280px; height: 10px; border-radius: 5px; background: rgba(0,0,0,.45); display: flex; overflow: hidden; box-shadow: inset 0 0 0 1px var(--line); }
+  .bars i:first-child { background: var(--me); } .bars i:last-child { background: var(--foe); margin-left: auto; }
+  .bars i { display: block; height: 100%; transition: width .3s; }
+  .sys { justify-self: end; display: flex; align-items: center; gap: 8px; font-variant-numeric: tabular-nums; }
+  .sys button { border: 1px solid var(--line); background: rgba(0,0,0,.35); border-radius: 6px; padding: 3px 10px; min-width: 40px; }
+  #fps { color: var(--dim); font-size: 13px; }
+  #clock { font-weight: 700; }
+
+  #feed { position: absolute; top: 54px; left: 16px; display: flex; flex-direction: column; gap: 6px; pointer-events: none; }
+  .msg { padding: 6px 12px; border-radius: 6px; background: var(--panel); border-left: 3px solid var(--gold); transition: opacity .8s; font-size: 15px; }
+  .msg.bad { border-left-color: var(--bad); } .msg.good { border-left-color: var(--good); } .msg.fade { opacity: 0; }
+
+  .bottom {
+    position: absolute; left: 0; right: 0; bottom: 0; height: 168px; padding: 10px 14px;
+    display: grid; grid-template-columns: 164px minmax(0, 1fr) 214px; gap: 14px; align-items: stretch;
+    background: var(--panel); border-top: 1px solid var(--line); box-sizing: border-box;
+  }
+  #minimap { width: 148px; height: 148px; border-radius: 6px; box-shadow: 0 0 0 1px var(--line); cursor: crosshair; image-rendering: auto; }
+  .mini { display: flex; align-items: center; }
+  .army { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+  .orders { display: flex; align-items: center; gap: 8px; min-height: 30px; flex-wrap: wrap; }
+  .orders .hint { color: var(--dim); margin-right: 6px; } .orders .hint b { color: var(--cream); }
+  .orders button { border: 1px solid var(--line); background: rgba(255,255,255,.06); border-radius: 6px; padding: 4px 10px; }
+  .orders button:hover { background: rgba(255,255,255,.12); }
+  .orders button[aria-pressed="true"] { border-color: var(--me-light); }
+  .cards { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: thin; }
+  .card {
+    position: relative; flex: none; width: 86px; height: 96px; padding: 6px 6px 5px; box-sizing: border-box;
+    display: grid; grid-template-columns: 26px 1fr; grid-template-rows: auto 1fr auto auto; column-gap: 4px; text-align: left;
+    border-radius: 8px; border: 1px solid var(--line); background: linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.02));
+  }
+  .card svg { width: 24px; height: 24px; color: var(--me-light); grid-row: 1; }
+  .card .n { font-size: 20px; line-height: 24px; font-variant-numeric: tabular-nums; }
+  .card .nm { grid-column: 1 / -1; font-size: 13px; line-height: 1.05; font-weight: 700; align-self: start; margin-top: 3px; }
+  .card .mor { grid-column: 1 / -1; display: block; height: 5px; border-radius: 3px; background: rgba(0,0,0,.5); overflow: hidden; margin-top: 3px; }
+  .card .mor > i { display: block; height: 100%; }
+  .card .st { grid-column: 1 / -1; font-size: 12px; color: var(--dim); margin-top: 2px; white-space: nowrap; }
+  .card .grp { position: absolute; top: 4px; right: 6px; font-size: 12px; color: var(--gold); font-weight: 700; }
+  .card.sel { border-color: var(--me-light); box-shadow: inset 0 0 0 1px var(--me-light); background: linear-gradient(180deg, rgba(127,232,200,.16), rgba(255,255,255,.03)); }
+  .card.rout { border-color: var(--bad); } .card.rout .st { color: var(--bad); font-weight: 700; }
+  .card.dead { opacity: .35; }
+  .help { font-size: 12.5px; color: var(--dim); line-height: 1.5; overflow: hidden; }
+  .help b { color: var(--cream); font-weight: 700; }
+
+  .overlay { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(8, 10, 16, .72); backdrop-filter: blur(3px); padding-inline: 16px; }
+  .overlay[hidden] { display: none; }
+  .dialog { width: min(860px, 100%); background: rgba(16, 19, 30, .96); border: 1px solid var(--line); border-radius: 14px; padding: 26px 28px; box-shadow: 0 30px 80px rgba(0,0,0,.5); }
+  .dialog h1 { margin: 0; font: 800 34px var(--display); color: var(--gold); letter-spacing: .04em; }
+  .dialog .lead { margin: 6px 0 18px; color: var(--dim); font-size: 16px; max-width: 64ch; }
+  #sides { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .side { text-align: left; display: flex; flex-direction: column; gap: 10px; padding: 16px; border-radius: 12px; border: 1px solid var(--line);
+    background: linear-gradient(160deg, color-mix(in srgb, var(--c) 26%, transparent), rgba(255,255,255,.02)); }
+  .side:hover { border-color: var(--c); }
+  .side-name { font: 800 24px var(--display); }
+  .side-blurb { color: var(--cream); opacity: .85; }
+  .side-army { display: flex; flex-direction: column; gap: 4px; font-size: 14px; color: var(--dim); }
+  .side-army span { display: flex; align-items: center; gap: 6px; } .side-army svg { width: 16px; height: 16px; color: var(--cream); }
+  .side-go { margin-top: 4px; align-self: flex-start; padding: 7px 14px; border-radius: 8px; background: var(--c); color: #fff; font-weight: 700; }
+  .controls { margin-top: 18px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px 18px; font-size: 14px; color: var(--dim); }
+  .controls b { color: var(--cream); }
+  .note { margin: 16px 0 0; font-size: 13px; color: var(--dim); }
+  #end-body h2 { margin: 0 0 6px; font: 800 40px var(--display); } #end-body .win { color: var(--good); } #end-body .lose { color: var(--bad); }
+  #end-body table { border-collapse: collapse; margin: 12px 0 18px; font-variant-numeric: tabular-nums; }
+  #end-body td, #end-body th { padding: 5px 14px 5px 0; text-align: left; } #end-body th { color: var(--dim); font-weight: 400; }
+  .end-actions { display: flex; gap: 10px; }
+  .end-actions button { padding: 8px 16px; border-radius: 8px; border: 1px solid var(--line); background: rgba(255,255,255,.08); font-weight: 700; }
+  .end-actions button:first-child { background: var(--me); border-color: transparent; }
+  @media (max-width: 1100px) { .help { display: none; } .bottom { grid-template-columns: 170px minmax(0, 1fr); } .bars { width: 160px; } }
+  @media (max-width: 760px) { #sides, .controls { grid-template-columns: 1fr; } .title span { display: none; } }
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="view"></canvas>
+  <div id="selbox"></div>
+  <header class="top">
+    <div class="title">ОРДО<span>поле боя · прототип</span></div>
+    <div class="strength"><span class="fname" id="f0"></span><span id="n0">0</span><div class="bars"><i id="b0"></i><i id="b1"></i></div><span id="n1">0</span><span class="fname" id="f1"></span></div>
+    <div class="sys"><span id="fps"></span><span id="clock">0:00</span><button type="button" id="speed" title="Скорость (+ / −)">×1</button><button type="button" id="pause" title="Пауза (P)">❚❚</button></div>
+  </header>
+  <div id="feed"></div>
+  <footer class="bottom">
+    <div class="mini"><canvas id="minimap" width="180" height="180" title="Клик — камера, правый клик — отправить выбранных"></canvas></div>
+    <div class="army"><div class="orders" id="orders"></div><div class="cards" id="cards"></div></div>
+    <div class="help"><b>ЛКМ</b> выбрать, рамкой — несколько<br><b>ПКМ</b> идти · по врагу — атака<br><b>ПКМ + тянуть</b> — выстроить линию<br><b>F</b> строй · <b>H</b> стоп · <b>G</b> качып атуу<br><b>WASD</b>, колесо, <b>Q/E</b> — камера<br><b>Ctrl+1…9</b> группа · <b>P</b> пауза · <b>+/−</b> скорость</div>
+  </footer>
+
+  <div class="overlay" id="menu">
+    <div class="dialog">
+      <h1>Ордо · поле боя</h1>
+      <p class="lead">Первый играбельный прототип: оседлые против кочевников, XVIII век. Проверяем бой, управление и масштаб. Модели пока простые.</p>
+      <div id="sides"></div>
+      <div class="controls">
+        <span><b>ЛКМ</b> — выбрать отряд</span><span><b>Рамка</b> — несколько отрядов</span><span><b>ПКМ</b> — идти / атаковать</span>
+        <span><b>ПКМ + тянуть</b> — линия</span><span><b>F</b> — строй (каре против конницы)</span><span><b>G</b> — качып атуу</span>
+        <span><b>WASD / края</b> — камера</span><span><b>Колесо, Q/E</b> — зум, поворот</span><span><b>P</b> — пауза, <b>+/−</b> — скорость</span>
+      </div>
+      <p class="note">Копейщики держат удар конницы. Конница сильна в разгоне. Мылтыки бьют с 95 м, луки с 110 м, но стрел у всадника 30, и пополнить их можно только вдали от боя.</p>
+    </div>
+  </div>
+  <div class="overlay" id="endscreen" hidden>
+    <div class="dialog" style="width:min(520px,100%)"><div id="end-body"></div>
+      <div class="end-actions"><button type="button" id="again">Ещё раз</button><button type="button" id="swap">Сменить сторону</button></div></div>
+  </div>
+</div>
+<script type="module" src="src/main.js"></script>
+<!--ARTIFACT-END-->
+</body>
+</html>
