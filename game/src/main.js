@@ -7,6 +7,7 @@ import { Renderer3D } from './render.js';
 import { RTSCamera } from './camera.js';
 import { Input } from './input.js';
 import { HUD } from './hud.js';
+import { BattleAudio } from './audio.js';
 
 const canvas = document.getElementById('view');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
@@ -27,12 +28,14 @@ scene.add(buildSky(), buildOuterGround(), buildTerrain(), buildWater(), buildTre
 const rts = new RTSCamera(camera, canvas);
 let sim = null, ai = null, r3d = null, paused = false, speed = 1;
 const SPEEDS = [0.5, 1, 2, 3];
+const audio = new BattleAudio();
 const input = new Input({ dom: canvas, rts, scene, onChange: () => hud.renderCards() });
 const hud = new HUD({
   input, rts,
   onStart: (side) => start(side),
   onPause: () => { paused = !paused; },
   onSpeed: () => { speed = SPEEDS[(SPEEDS.indexOf(speed) + 1) % SPEEDS.length]; },
+  onMute: () => { audio.setMuted(!audio.muted); return audio.muted; },
 });
 
 function start(side) {
@@ -47,10 +50,16 @@ function start(side) {
   rts.yaw = 0; rts.dist = 240;
   rts.centerOn(mine.reduce((a, q) => a + q.cx, 0) / mine.length, mine.reduce((a, q) => a + q.cz, 0) / mine.length - 40);
   paused = false; speed = 1;
+  // horns open the battle: ours close by, theirs far off
+  audio.init();
+  const theirs = sim.squads.filter((q) => q.team === 1);
+  setTimeout(() => audio.horn(rts.tx, rts.tz, side, 0.9), 400);
+  setTimeout(() => audio.horn(theirs[0].cx, theirs[0].cz, other, 2.5), 1900);
 }
 
 addEventListener('keydown', (e) => {
   if (e.code === 'KeyP') paused = !paused;
+  if (e.code === 'KeyM') document.getElementById('mute').click();
   if (e.key === '+' || e.key === '=') speed = SPEEDS[Math.min(SPEEDS.length - 1, SPEEDS.indexOf(speed) + 1)];
   if (e.key === '-' || e.key === '_') speed = SPEEDS[Math.max(0, SPEEDS.indexOf(speed) - 1)];
 });
@@ -62,7 +71,7 @@ function resize() {
 addEventListener('resize', resize); resize();
 
 const clock = new THREE.Clock();
-let fps = 60, acc = 0, frames = 0;
+let fps = 60, acc = 0, frames = 0, bedT = 0;
 function frame() {
   requestAnimationFrame(frame);
   const dt = Math.min(0.1, clock.getDelta());
@@ -76,6 +85,9 @@ function frame() {
     for (let i = 0; i < n; i++) { ai.update(h); sim.step(h); }
   }
   if (sim) {
+    audio.listener(rts.tx, rts.tz, rts.dist, rts.yaw);
+    audio.onEvents(sim.events, sim, dt);
+    bedT -= dt; if (bedT <= 0) { bedT = 0.2; audio.updateBeds(sim); }
     r3d.onEvents(sim.events); hud.onEvents(sim.events); sim.events.length = 0;
     r3d.update(simDt, camera, renderer.domElement.height);
     hud.update(dt, fps, paused, speed);

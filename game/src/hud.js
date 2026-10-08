@@ -1,5 +1,6 @@
 // HTML interface: army bars, unit cards, order buttons, minimap, message feed, start and end screens.
 import { FORMATIONS, FACTIONS, TYPES, formationsFor } from './units.js';
+import { CRY_COOLDOWN } from './sim.js';
 import { groundColor } from './terrain.js';
 import { HALF, SIZE, groundY, WATER_Y } from './world.js';
 
@@ -10,16 +11,18 @@ const ICONS = {
   cannon: '<circle cx="8" cy="17" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 17L21 9" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>',
   cav: '<path d="M4 13c2-3 6-3 9-2l4-5 3 1-1 4-2 1v3c0 2-1 3-2 3v3h-2v-3H9v3H7v-3c-2 0-3-2-3-5z" fill="currentColor"/>',
   bow: '<path d="M6 3c9 3 12 12 15 18" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M6 3l15 18M4 14l12-6" stroke="currentColor" stroke-width="1.4"/>',
+  shield: '<path d="M12 3l7 3v5c0 5-3 8-7 10-4-2-7-5-7-10V6z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 16L18 4" stroke="currentColor" stroke-width="1.8"/>',
+  crown: '<path d="M3 18l2-10 5 5 2-7 2 7 5-5 2 10z" fill="currentColor"/><path d="M4 21h16" stroke="currentColor" stroke-width="2"/>',
   lance: '<path d="M3 21L20 4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M20 4l1-1-1 5-3-1z" fill="currentColor"/><path d="M14 6l4 1-3 3z" fill="currentColor"/>',
 };
 const icon = (k) => `<svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[k]}</svg>`;
 const STATE = (q) => q.dead ? 'Разбит' : q.state === 'rout' ? 'Бегут' : q.kiting ? 'Качып атуу' : q.lastEngaged > 0 ? 'Рукопашная'
-  : q.fireTarget ? 'Огонь' : q.moving ? 'Марш' : q.order.kind === 'hold' ? 'Стоят' : 'Ждут';
+  : q.fireTarget && !q.meleeMode ? 'Стреляют' : q.stam < 30 ? 'Устали' : q.moving ? (q.running ? 'Бегом' : 'Марш') : q.order.kind === 'hold' ? 'Стоят' : 'Ждут';
 const fmt = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
 
 export class HUD {
-  constructor({ input, rts, onStart, onPause, onSpeed }) {
-    Object.assign(this, { input, rts, onStart, onPause, onSpeed });
+  constructor({ input, rts, onStart, onPause, onSpeed, onMute }) {
+    Object.assign(this, { input, rts, onStart, onPause, onSpeed, onMute });
     this.sim = null; this.t = 0; this.mt = 0; this.feed = [];
     $('cards').addEventListener('click', (e) => {
       const b = e.target.closest('.card'); if (!b) return;
@@ -34,9 +37,13 @@ export class HUD {
       if (b.dataset.act === 'hold') { for (const q of sqs) this.sim.order(q, { kind: 'hold', face: q.face }); input.onChange(); }
       if (b.dataset.act === 'form') input.cycleFormation(sqs);
       if (b.dataset.act === 'skirm') input.toggleSkirmish(sqs);
+      if (b.dataset.act === 'melee') input.toggleMelee(sqs);
+      if (b.dataset.act === 'cry') input.warCry();
     });
     $('pause').addEventListener('click', () => onPause());
+    $('helpbtn').addEventListener('click', () => { const h = $('help'); h.hidden = !h.hidden; $('helpbtn').setAttribute('aria-pressed', !h.hidden); });
     $('speed').addEventListener('click', () => onSpeed());
+    $('mute').addEventListener('click', () => { const m = onMute(); $('mute').textContent = m ? '🔇' : '🔊'; $('mute').setAttribute('aria-pressed', m); });
     // minimap
     const mm = $('minimap');
     this.mmBase = null;
@@ -44,7 +51,7 @@ export class HUD {
     mm.addEventListener('contextmenu', (e) => e.preventDefault());
     mm.addEventListener('pointerdown', (e) => {
       const [x, z] = mmPoint(e);
-      if (e.button === 2) { const sqs = input.selectedLive(); if (sqs.length) input.groupMove(sqs, x, z); return; }
+      if (e.button === 2) { const sqs = input.selectedLive(); input.run = false; if (sqs.length) input.groupMove(sqs, x, z); return; }
       rts.centerOn(x, z); this.mmDrag = true; mm.setPointerCapture(e.pointerId);
     });
     mm.addEventListener('pointermove', (e) => { if (this.mmDrag) rts.centerOn(...mmPoint(e)); });
@@ -67,18 +74,23 @@ export class HUD {
     const sim = this.sim; if (!sim) return;
     const mine = sim.squads.filter((q) => q.team === this.input.team);
     const grp = (q) => Object.entries(this.input.groups).filter(([, g]) => g.includes(q)).map(([k]) => k).join('');
-    $('cards').innerHTML = mine.map((q) => `<button type="button" class="card" data-id="${q.id}" id="card-${q.id}" title="${q.T.name}: ${q.T.sub}">
-      ${icon(q.T.icon)}<b class="n"></b><span class="nm">${q.T.name}</span><i class="mor"><i></i></i><span class="st"></span><span class="grp">${grp(q)}</span></button>`).join('');
+    $('cards').innerHTML = mine.map((q) => `<button type="button" class="card${q.T.commander ? ' cmd' : ''}" data-id="${q.id}" id="card-${q.id}" title="${q.T.name}: ${q.T.sub}">
+      ${icon(q.T.icon)}<b class="n"></b><span class="nm">${q.T.commander ? q.T.commander.name : q.T.name}</span>
+      <i class="mor" title="Мораль"><i></i></i><i class="sta" title="Выносливость"><i></i></i><span class="st"></span><span class="am"></span><span class="grp">${grp(q)}</span></button>`).join('');
     const sel = this.input.selectedLive();
     const o = $('orders');
     if (!sel.length) { o.innerHTML = `<span class="hint">Выберите отряд: клик по солдатам или по карточке. Рамкой — несколько.</span>`; }
     else {
       const forms = [...new Set(sel.map((q) => q.formation))].map((f) => FORMATIONS[f].name).join(' / ');
-      const canForm = sel.some((q) => formationsFor(q.T).length > 1), hs = sel.filter((q) => q.T.skirmish);
+      const canForm = sel.some((q) => formationsFor(q.T).length > 1), hs = sel.filter((q) => q.T.skirmish && !q.meleeMode);
+      const rs = sel.filter((q) => q.T.ranged), cmd = sel.some((q) => q.T.commander);
       o.innerHTML = `<span class="hint"><b>${sel.length === 1 ? sel[0].T.name : `Отрядов: ${sel.length}`}</b> · ${sel.reduce((a, q) => a + q.alive.length, 0)} чел.</span>
         <button type="button" data-act="hold" id="ord-hold">Стоп <kbd>H</kbd></button>
         ${canForm ? `<button type="button" data-act="form" id="ord-form">Строй: ${forms} <kbd>F</kbd></button>` : ''}
-        ${hs.length ? `<button type="button" data-act="skirm" id="ord-skirm" aria-pressed="${hs.every((q) => q.skirmish)}">Качып атуу: ${hs.every((q) => q.skirmish) ? 'вкл' : 'выкл'} <kbd>G</kbd></button>` : ''}`;
+        ${hs.length ? `<button type="button" data-act="skirm" id="ord-skirm" aria-pressed="${hs.every((q) => q.skirmish)}">Качып атуу: ${hs.every((q) => q.skirmish) ? 'вкл' : 'выкл'} <kbd>G</kbd></button>` : ''}
+        ${rs.length ? `<button type="button" data-act="melee" id="ord-melee" aria-pressed="${rs.every((q) => q.meleeMode)}">${rs.every((q) => q.meleeMode) ? 'Рукопашная' : 'Стрельба'} <kbd>R</kbd></button>` : ''}
+        ${cmd ? `<button type="button" data-act="cry" id="ord-cry" class="cry">Клич <kbd>V</kbd></button>` : ''}
+        <span class="hint">Двойной ПКМ — бегом</span>`;
     }
     this.updateCards();
   }
@@ -91,12 +103,24 @@ export class HUD {
       const m = el.querySelector('.mor > i'); m.style.width = Math.max(0, Math.min(100, q.morale)) + '%';
       m.style.background = q.morale > 60 ? '#7cc46b' : q.morale > 35 ? '#e0b44a' : '#e0645a';
       el.querySelector('.st').textContent = STATE(q);
+      const st = el.querySelector('.sta > i'); st.style.width = Math.max(0, Math.min(100, q.stam)) + '%';
+      st.style.background = q.stam > 30 ? '#6fb2e8' : '#e0b44a';
+      el.querySelector('.am').textContent = q.T.ranged ? (q.meleeMode ? '⚔ рукопашная' : `${Math.round(q.ammo / Math.max(1, q.alive.length))} стрел`) : '';
+    }
+    const cry = document.getElementById('ord-cry');
+    if (cry) {
+      const tm = this.sim.teams[this.input.team], left = Math.ceil(tm.cryReady - this.sim.time);
+      cry.disabled = !tm.cmd || left > 0;
+      cry.innerHTML = !tm.cmd ? 'Клич (командир погиб)' : left > 0 ? `Клич через ${left} с` : 'Клич <kbd>V</kbd>';
     }
   }
 
   onEvents(events) {
     for (const e of events) {
       if (e.k === 'rout') this.say(e.sq.team === this.input.team ? `Наши «${e.sq.T.name}» бегут!` : `Враг бежит: «${e.sq.T.name}»`, e.sq.team === this.input.team ? 'bad' : 'good');
+      if (e.k === 'noAmmo') this.say(e.sq.team === this.input.team ? `«${e.sq.T.name}»: стрелы кончились, взялись за сабли` : `У врага кончились стрелы: «${e.sq.T.name}»`, e.sq.team === this.input.team ? '' : 'good');
+      if (e.k === 'cry') this.say(e.team === this.input.team ? 'Боевой клич! Дух и силы отрядов рядом с командиром выросли' : 'Враг поднял боевой клич', e.team === this.input.team ? 'good' : 'bad');
+      if (e.k === 'cmdDead') this.say(e.team === this.input.team ? `Наш ${e.name.toLowerCase()} погиб! Мораль армии падает` : `Вражеский ${e.name.toLowerCase()} убит!`, e.team === this.input.team ? 'bad' : 'good');
       if (e.k === 'end') this.showEnd(e.result);
     }
   }

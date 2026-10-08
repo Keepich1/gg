@@ -24,7 +24,7 @@ export class Input {
 
   attach(sim, r3d, team = 0) {
     this.sim = sim; this.r3d = r3d; this.team = team; this.sel = r3d.selected; this.groups = {};
-    this.sel.clear(); this.onChange();
+    this.sel.clear(); this.run = false; this.onChange();
   }
 
   pos(e) { const r = this.dom.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; }
@@ -99,9 +99,11 @@ export class Input {
     if (e.button === 2 && this.rdrag) {
       const R = this.rdrag; this.rdrag = null; this.line.visible = false;
       const sqs = this.selectedLive(); if (!sqs.length) return;
+      const now = performance.now(), run = now - (this.lastRight || 0) < 350;
+      this.lastRight = now; this.run = run;
       const foe = this.soldierAt(x, y, true);
       if (foe && Math.hypot(x - R.x0, y - R.y0) < 12) {
-        for (const sq of sqs) this.sim.order(sq, { kind: 'attack', target: foe.sq });
+        for (const sq of sqs) this.sim.order(sq, { kind: 'attack', target: foe.sq, run });
         this.r3d.marker(foe.sq.mx, foe.sq.mz, '#ff6b5a');
       } else if (R.g0) {
         if (Math.hypot(x - R.x0, y - R.y0) >= 12 && R.g1) this.lineOrder(sqs, R.g0, R.g1);
@@ -145,7 +147,7 @@ export class Input {
       const w = widths[i] * scale, mid = acc + w / 2;
       const files = width && q.formation !== 'square' && q.formation !== 'column' ? Math.max(2, Math.round(w / (q.T.spacing * (q.formation === 'loose' ? 1.8 : 1))) + 1) : q.files;
       const px = x + rx * mid, pz = z + rz * mid;
-      this.sim.order(q, { kind: 'move', x: px, z: pz, face, files });
+      this.sim.order(q, { kind: 'move', x: px, z: pz, face, files, run: this.run });
       this.r3d.marker(px, pz, '#c8f5b0');
       acc += w + gap;
     });
@@ -157,6 +159,8 @@ export class Input {
     if (e.code === 'KeyH') { for (const q of sqs) this.sim.order(q, { kind: 'hold', face: q.face }); this.onChange(); }
     else if (e.code === 'KeyF') this.cycleFormation(sqs);
     else if (e.code === 'KeyG') this.toggleSkirmish(sqs);
+    else if (e.code === 'KeyR') this.toggleMelee(sqs);
+    else if (e.code === 'KeyV') this.warCry();
     else if (e.code === 'Escape') this.select([]);
     else if (e.code === 'Space') { e.preventDefault(); this.focus(sqs); }
     else if (/^Digit[1-9]$/.test(e.code)) {
@@ -180,6 +184,13 @@ export class Input {
     for (const q of hs) q.skirmish = on;
     this.onChange();
   }
+  toggleMelee(sqs) {
+    const rs = sqs.filter((q) => q.T.ranged);
+    const on = !rs.every((q) => q.meleeMode);
+    for (const q of rs) this.sim.setMelee(q, on);
+    this.onChange();
+  }
+  warCry() { if (this.sim.warCry(this.team)) this.onChange(); }
   focus(sqs) {
     if (!sqs.length) return;
     this.rts.centerOn(sqs.reduce((a, q) => a + q.mx, 0) / sqs.length, sqs.reduce((a, q) => a + q.mz, 0) / sqs.length);

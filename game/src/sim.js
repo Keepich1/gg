@@ -1,5 +1,5 @@
 // Battle simulation. No rendering here, so it also runs headless in Node.
-import { TYPES, FACTIONS, FORMATIONS, slotLocal } from './units.js';
+import { TYPES, FACTIONS, FORMATIONS, slotLocal, defaultFormation } from './units.js';
 import { groundY, terrainSpeed, HALF, SIZE, rng } from './world.js';
 
 const CELL = 8, GW = Math.ceil(SIZE / CELL);
@@ -9,6 +9,9 @@ const turn = (a, b, rate) => { const d = angDiff(a, b); return Math.abs(d) <= ra
 export const fwdOf = (th) => [Math.sin(th), Math.cos(th)];
 export const rightOf = (th) => [-Math.cos(th), Math.sin(th)];
 const ROUT_AT = (T) => (T.mounted ? 22 : 28);
+export const tiredK = (st) => (st >= 30 ? 1 : 0.55 + (0.45 * st) / 30); // speed factor from stamina
+export const CRY_COOLDOWN = 75;
+const AURA = 90; // commander morale aura, m
 
 export class Sim {
   constructor({ factions, seed = 1, armyScale = 1 }) {
@@ -16,7 +19,7 @@ export class Sim {
     this.time = 0;
     this.soldiers = []; this.squads = []; this.projectiles = []; this.events = [];
     this.result = null;
-    this.teams = factions.map((key, id) => ({ id, key, faction: FACTIONS[key], initial: 0, alive: 0, kills: 0, losses: 0, routT: 0 }));
+    this.teams = factions.map((key, id) => ({ id, key, faction: FACTIONS[key], initial: 0, alive: 0, kills: 0, losses: 0, routT: 0, cmd: null, cmdDead: false, cryReady: 15 }));
     this.teams.forEach((tm) => {
       const th = tm.id === 0 ? Math.PI : 0, baseZ = tm.id === 0 ? 330 : -330;
       const [fx, fz] = fwdOf(th), [rx, rz] = rightOf(th);
@@ -31,22 +34,24 @@ export class Sim {
     const T = TYPES[key], n = Math.max(1, Math.round(T.count * scale));
     const sq = {
       id: this.squads.length, team, T, key, cx, cz, mx: cx, mz: cz, face, soldiers: [], alive: [],
-      order: { kind: 'idle', face }, formation: T.skirmish ? 'loose' : 'line', files: null,
-      morale: 100, state: 'idle', initial: n, kills: 0, skirmish: !!T.skirmish, fireTarget: null,
-      moving: false, engaged: 0, errSum: 0, dead: false, lastHit: -99, banner: null, threat: null,
+      order: { kind: 'idle', face }, formation: defaultFormation(T), files: null,
+      morale: 100, stam: 100, ammo: 0, state: 'idle', initial: n, kills: 0, skirmish: !!T.skirmish, meleeMode: false,
+      fireTarget: null, moving: false, running: false, engaged: 0, errSum: 0, dead: false, lastHit: -99, shoutT: -99, banner: null,
     };
     for (let i = 0; i < n; i++) {
       const [lx, lz] = slotLocal(sq, i, n), [fx, fz] = fwdOf(face), [rx, rz] = rightOf(face);
-      const x = cx + rx * lx + fx * lz, z = cz + rz * lx + fz * lz;
+      const x = cx + rx * lx + fx * lz, z = cz + rz * lx + fz * lz, isCmd = !!(T.commander && i === 0);
       const s = {
         i: this.soldiers.length, team, sq, T, x, z, y: groundY(x, z), vx: 0, vz: 0, yaw: face,
-        hp: T.hp, alive: true, reload: T.ranged ? this.rand() * T.ranged.reload : 0, meleeCd: 0, ammo: T.ranged?.ammo ?? Infinity,
+        hp: T.hp * (isCmd ? 1.4 : 1), alive: true, reload: T.ranged ? this.rand() * T.ranged.reload : 0, meleeCd: 0,
+        ammo: T.ranged?.ammo ?? 0, stam: 100, isCmd, model: isCmd ? T.commander.model : T.model,
         target: null, chargeT: 0, deadT: -1, fall: this.rand() < 0.5 ? -1 : 1, walk: this.rand() * 10,
-        speed: 0, slot: i, shotT: -99, strikeT: -99, tint: 0.82 + this.rand() * 0.3,
+        speed: 0, slot: i, shotT: -99, strikeT: -99, tint: isCmd ? 1 : 0.82 + this.rand() * 0.3,
       };
       sq.soldiers.push(s); sq.alive.push(s); this.soldiers.push(s);
     }
-    sq.banner = sq.alive[Math.floor(Math.min(n, Math.ceil(n / T.ranks)) / 2)] || sq.alive[0];
+    sq.banner = T.commander ? sq.alive[0] : sq.alive[Math.floor(Math.min(n, Math.ceil(n / T.ranks)) / 2)] || sq.alive[0];
+    if (T.commander) this.teams[team].cmd = sq.alive[0];
     this.squads.push(sq);
     this.teams[team].initial += n; this.teams[team].alive += n;
     return sq;
@@ -85,11 +90,30 @@ export class Sim {
     return best;
   }
 
-  // ---------- orders (used by the player and the AI) ----------
+  // ---------- commands (player and AI) ----------
   order(sq, o) {
     if (sq.dead || sq.state === 'rout') return;
     sq.order = o;
     if (o.kind === 'move') sq.files = o.files ?? sq.files;
+  }
+  shoots(sq) { return !!sq.T.ranged && !sq.meleeMode; }
+  setMelee(sq, on) {
+    if (!sq.T.ranged) return;
+    sq.meleeMode = on || sq.ammo < 1;
+    if (sq.order.kind === 'attack') sq.order = { ...sq.order }; // re-evaluate approach
+  }
+  warCry(team) {
+    const tm = this.teams[team], c = tm.cmd;
+    if (!c || !c.alive || this.time < tm.cryReady) return false;
+    tm.cryReady = this.time + CRY_COOLDOWN;
+    for (const q of this.squads) {
+      if (q.team !== team || q.dead || Math.hypot(q.mx - c.x, q.mz - c.z) > 130) continue;
+      q.morale = Math.min(100, q.morale + 25);
+      if (q.state === 'rout' && q.morale >= 45) { q.state = 'idle'; q.order = { kind: 'idle', face: q.face }; }
+      for (const s of q.alive) s.stam = Math.min(100, s.stam + 25);
+    }
+    this.events.push({ k: 'cry', team, x: c.x, z: c.z });
+    return true;
   }
 
   // ---------- main step ----------
@@ -105,31 +129,35 @@ export class Sim {
   }
 
   updateSquad(sq, dt) {
-    const al = sq.alive, T = sq.T;
+    const al = sq.alive, T = sq.T, tm = this.teams[sq.team];
     if (!al.length) { sq.dead = true; sq.state = 'dead'; return; }
-    let mx = 0, mz = 0;
-    for (const s of al) { mx += s.x; mz += s.z; }
-    sq.mx = mx / al.length; sq.mz = mz / al.length;
+    let mx = 0, mz = 0, st = 0, am = 0;
+    for (const s of al) { mx += s.x; mz += s.z; st += s.stam; am += s.ammo; }
+    sq.mx = mx / al.length; sq.mz = mz / al.length; sq.stam = st / al.length; sq.ammo = am;
+    if (T.ranged && !sq.meleeMode && am < 1) { sq.meleeMode = true; this.events.push({ k: 'noAmmo', sq }); }
+    const shoots = this.shoots(sq);
+    const cmd = tm.cmd;
+    sq.aura = !!(cmd && cmd.alive && Math.hypot(cmd.x - sq.mx, cmd.z - sq.mz) < AURA);
 
-    // nearest enemy squad, and nearest melee threat
+    // nearest enemy squad, and the nearest thing a skirmisher should back away from
     let near = null, nd = Infinity, threat = null, td = Infinity;
     for (const o of this.squads) {
-      if (o.dead || o.team === sq.team) continue;
+      if (o.dead || o.team === sq.team || o.state === 'rout') continue;
       const d = Math.hypot(o.mx - sq.mx, o.mz - sq.mz);
-      if (o.state !== 'rout' && d < nd) { nd = d; near = o; }
-      if (o.state !== 'rout' && o.T.melee && !o.T.ranged && d < td) { td = d; threat = o; }
-      // shooters with a shorter reach are also something to back away from
-      if (T.ranged && o.state !== 'rout' && o.T.ranged && !o.T.artillery && o.T.ranged.range < T.ranged.range && d < o.T.ranged.range + 8 && d - 30 < td) { td = d - 30; threat = o; }
+      if (d < nd) { nd = d; near = o; }
+      const oShoots = this.shoots(o);
+      if (!oShoots && o.T.melee && d < td) { td = d; threat = o; }
+      if (shoots && oShoots && o.T.ranged.range < T.ranged.range && d < o.T.ranged.range + 8 && d - 30 < td) { td = d - 30; threat = o; }
     }
     sq.near = near; sq.nearD = nd;
 
     // morale
     const inFight = sq.engaged > 0 || this.time - sq.lastHit < 4;
     if (sq.state === 'rout') {
-      if (nd > 90) sq.morale += 7 * dt;
+      if (nd > 90) sq.morale += (7 + (sq.aura ? 3 : 0)) * dt;
       if (sq.morale >= 60 && al.length >= sq.initial * 0.15) { sq.state = 'idle'; sq.order = { kind: 'idle', face: sq.face }; }
     } else {
-      if (!inFight && nd > 120) sq.morale = Math.min(100, sq.morale + 1.5 * dt);
+      if (!inFight && nd > 120) sq.morale = Math.min(100, sq.morale + (1.5 + (sq.aura ? 2 : 0)) * dt);
       if (sq.morale < ROUT_AT(T)) { sq.state = 'rout'; sq.fireTarget = null; this.events.push({ k: 'rout', sq }); }
     }
 
@@ -138,9 +166,9 @@ export class Sim {
     const o = sq.order;
     if (sq.state === 'rout') {
       const home = sq.team === 0 ? HALF - 60 : -HALF + 60;
-      const ax = near ? sq.mx - near.mx : 0, az = near ? sq.mz - near.mz : 1, al2 = Math.hypot(ax, az) || 1;
-      gx = sq.mx + (ax / al2) * 40; gz = sq.mz * 0.5 + home * 0.5 + (az / al2) * 40;
-      speedMul = 1.15; faceGoal = Math.atan2(gx - sq.cx, gz - sq.cz);
+      const ax = near ? sq.mx - near.mx : 0, az = near ? sq.mz - near.mz : 1, l = Math.hypot(ax, az) || 1;
+      gx = sq.mx + (ax / l) * 40; gz = sq.mz * 0.5 + home * 0.5 + (az / l) * 40;
+      speedMul = 1.1; faceGoal = Math.atan2(gx - sq.cx, gz - sq.cz);
     } else if (o.kind === 'move') {
       gx = o.x; gz = o.z;
       if (Math.hypot(gx - sq.cx, gz - sq.cz) < 1.5) sq.order = { kind: 'idle', face: o.face ?? sq.face };
@@ -151,28 +179,37 @@ export class Sim {
       else {
         const dx = tg.mx - sq.mx, dz = tg.mz - sq.mz, d = Math.hypot(dx, dz);
         faceGoal = Math.atan2(dx, dz);
-        if (T.ranged) {
-          const R = T.ranged;
-          const stand = sq.skirmish ? 0.9 : 0.8;
+        if (shoots) {
+          const R = T.ranged, stand = sq.skirmish ? 0.9 : 0.85;
           if (d > R.range * 0.95) { gx = sq.cx + (dx / d) * (d - R.range * stand); gz = sq.cz + (dz / d) * (d - R.range * stand); }
-          else if (R.minRange && d < R.minRange) { gx = sq.cx - (dx / d) * 15; gz = sq.cz - (dz / d) * 15; }
           else { gx = sq.cx; gz = sq.cz; sq.fireTarget = tg; }
         } else { gx = tg.mx; gz = tg.mz; }
       }
     }
     if (sq.state !== 'rout' && sq.order.kind !== 'attack') {
-      // auto-engage when idle
-      if (T.ranged && near && nd <= T.ranged.range && nd >= (T.ranged.minRange || 0)) sq.fireTarget = near;
-      else if (!T.ranged && T.melee && near && sq.order.kind === 'idle' && nd < (T.mounted ? 70 : 40)) sq.order = { kind: 'attack', target: near, auto: true };
+      if (shoots && near && nd <= T.ranged.range) sq.fireTarget = near;
+      else if (!shoots && T.melee && near && sq.order.kind === 'idle' && nd < (T.mounted ? 70 : 40)) sq.order = { kind: 'attack', target: near, auto: true };
     }
-    if (T.ranged && !sq.fireTarget && sq.state !== 'rout' && near && nd <= T.ranged.range && (T.mounted || sq.order.kind !== 'move')) sq.fireTarget = near;
+    if (shoots && !sq.fireTarget && sq.state !== 'rout' && near && nd <= T.ranged.range && (T.mounted || sq.order.kind !== 'move')) sq.fireTarget = near;
 
     // качып атуу: horse archers back away from melee threats while shooting
     sq.kiting = false;
-    if (sq.skirmish && sq.state !== 'rout' && threat && td < (threat.T.mounted ? 55 : threat.T.ranged ? threat.T.ranged.range - 22 : 28)) {
+    if (sq.skirmish && shoots && sq.state !== 'rout' && threat && td < (threat.T.mounted ? 55 : this.shoots(threat) ? threat.T.ranged.range - 22 : 28)) {
       const ax = sq.mx - threat.mx, az = sq.mz - threat.mz, l = Math.hypot(ax, az) || 1;
       gx = sq.cx + (ax / l) * 35; gz = sq.cz + (az / l) * 35; speedMul = 1; sq.kiting = true;
     }
+
+    // walk or run: charges, flight and kiting run; double right-click orders run all the way
+    const oo = sq.order;
+    let running = sq.state === 'rout' || sq.kiting || !!oo.run;
+    if (oo.kind === 'attack' && oo.target && !oo.target.dead && !shoots) {
+      const dd = Math.hypot(oo.target.mx - sq.mx, oo.target.mz - sq.mz);
+      if (dd < (T.mounted ? 80 : 40)) {
+        running = true;
+        if (this.time - sq.shoutT > 25 && sq.state !== 'rout') { sq.shoutT = this.time; this.events.push({ k: 'shout', team: sq.team, x: sq.mx, z: sq.mz, n: al.length }); }
+      }
+    }
+    sq.running = running;
 
     // keep the centre with the fight once soldiers are engaged
     if (sq.lastEngaged > al.length * 0.25) { sq.cx += (sq.mx - sq.cx) * Math.min(1, dt * 2); sq.cz += (sq.mz - sq.cz) * Math.min(1, dt * 2); gx = sq.cx; gz = sq.cz; }
@@ -181,7 +218,7 @@ export class Sim {
     const cohesion = sq.lastErr > (T.mounted ? 9 : 4.5) ? 0.35 : 1;
     sq.moving = d > 0.6;
     if (sq.moving) {
-      const v = Math.min(d, T.speed * speedMul * cohesion * terrainSpeed(sq.cx, sq.cz) * dt);
+      const v = Math.min(d, T.speed * (running ? 1 : T.walk) * speedMul * cohesion * tiredK(sq.stam) * terrainSpeed(sq.cx, sq.cz) * dt);
       sq.cx += (dx / d) * v; sq.cz += (dz / d) * v;
       if (sq.kiting || (o.kind === 'move' && d > 12 && !sq.fireTarget)) faceGoal = Math.atan2(dx, dz);
     }
@@ -190,15 +227,16 @@ export class Sim {
   }
 
   updateSoldier(s, dt) {
-    const sq = s.sq, T = s.T, n = sq.alive.length;
+    const sq = s.sq, T = s.T, n = sq.alive.length, shoots = this.shoots(sq);
     const [lx, lz] = slotLocal(sq, s.slot, n), [fx, fz] = fwdOf(sq.face), [rx, rz] = rightOf(sq.face);
     let gx = sq.cx + rx * lx + fx * lz, gz = sq.cz + rz * lx + fz * lz;
     s.meleeCd -= dt;
+    const tired = tiredK(s.stam);
 
     // melee
     let foe = null;
     if (sq.state !== 'rout' && T.melee) {
-      const charging = sq.order.kind === 'attack' && !T.ranged;
+      const charging = sq.order.kind === 'attack' && !shoots;
       const r = charging ? (T.mounted ? 14 : 9) : sq.kiting ? 0 : T.mounted ? 6 : 4.5;
       if (r > 0) foe = s.target && s.target.alive && (s.target.x - s.x) ** 2 + (s.target.z - s.z) ** 2 < (r * 1.6) ** 2 ? s.target : this.nearestEnemy(s, r);
     }
@@ -212,32 +250,30 @@ export class Sim {
     } else sq.errSum += Math.hypot(gx - s.x, gz - s.z);
 
     // shooting
-    if (!foe && T.ranged && sq.fireTarget && sq.state !== 'rout') {
+    if (!foe && shoots && sq.fireTarget && sq.state !== 'rout') {
       s.reload -= dt;
       const canFire = T.mounted || !sq.moving;
       if (canFire && s.reload <= 0 && s.ammo > 0) {
         const ft = sq.fireTarget.alive;
         const tgt = ft.length ? ft[Math.floor(this.rand() * ft.length)] : null;
         const d = tgt ? Math.hypot(tgt.x - s.x, tgt.z - s.z) : Infinity;
-        if (tgt && d <= T.ranged.range && d >= (T.ranged.minRange || 0)) { this.fire(s, tgt, d); s.ammo--; s.reload = T.ranged.reload * (0.9 + this.rand() * 0.2); }
+        if (tgt && d <= T.ranged.range) { this.fire(s, tgt, d); s.ammo--; s.reload = T.ranged.reload * (0.9 + this.rand() * 0.2); }
         else s.reload = 0.4;
       }
     } else if (T.ranged && s.reload > 0) s.reload -= dt * 0.5;
-    if (T.ranged?.ammo && sq.nearD > 160 && s.ammo < T.ranged.ammo) s.ammo = Math.min(T.ranged.ammo, s.ammo + dt * 0.6);
 
     // movement
     let dvx = 0, dvz = 0;
     if (!stand) {
       const dx = gx - s.x, dz = gz - s.z, d = Math.hypot(dx, dz);
       if (d > 0.15) {
-        let v = T.speed * terrainSpeed(s.x, s.z);
-        if (sq.state === 'rout') v *= 1.15;
-        if (!foe && d > 3) v *= 1.3;
+        const top = T.speed * tired * terrainSpeed(s.x, s.z);
+        let v = foe ? top * (T.mounted ? 1 : 0.9) : top * (sq.running ? 1 : T.walk);
+        if (!foe && d > 3) v = Math.min(top, v * 1.25);
         if (!foe && d < 2) v *= d / 2;
         dvx = (dx / d) * v; dvz = (dz / d) * v;
       }
     }
-    // separation from neighbours
     const rad = T.mounted ? 2.1 : 0.95;
     let px = 0, pz = 0;
     this.forNear(s.x, s.z, rad, (o) => {
@@ -253,17 +289,21 @@ export class Sim {
     s.speed = Math.hypot(s.vx, s.vz);
     s.walk += s.speed * dt;
 
+    // stamina: running and galloping tire, standing restores
+    if (s.speed > T.speed * T.walk * 1.12) s.stam = Math.max(0, s.stam - T.drain * dt);
+    else s.stam = Math.min(100, s.stam + (s.speed < 0.4 ? 5 : 2.2) * dt);
+
     let yawGoal = sq.face;
     if (foe) yawGoal = Math.atan2(foe.x - s.x, foe.z - s.z);
     else if (sq.fireTarget && (T.mounted || !sq.moving) && !sq.kiting) yawGoal = Math.atan2(sq.fireTarget.mx - s.x, sq.fireTarget.mz - s.z);
     else if (s.speed > 0.8) yawGoal = Math.atan2(s.vx, s.vz);
     s.yaw = turn(s.yaw, yawGoal, 5 * dt);
-    if (T.mounted) s.chargeT = s.speed > 0.75 * T.speed ? s.chargeT + dt : Math.max(0, s.chargeT - dt * 2);
+    if (T.mounted) s.chargeT = s.speed > 0.75 * T.speed && s.stam > 20 ? s.chargeT + dt : Math.max(0, s.chargeT - dt * 2);
   }
 
   strike(s, foe) {
     const T = s.T;
-    let dmg = T.melee.dmg;
+    let dmg = T.melee.dmg * (0.7 + 0.3 * Math.min(1, s.stam / 30)) * (s.isCmd ? 1.4 : 1);
     if (foe.T.mounted && T.melee.vsCav) dmg *= T.melee.vsCav;
     if (T.mounted && s.chargeT > 1.2) {
       dmg *= T.melee.charge || 1.5; s.chargeT = 0;
@@ -277,6 +317,8 @@ export class Sim {
     dmg = Math.max(1, dmg - foe.T.armor - sqArmor) * (0.85 + this.rand() * 0.3);
     s.meleeCd = T.melee.rate * (0.85 + this.rand() * 0.3);
     s.strikeT = this.time;
+    s.stam = Math.max(0, s.stam - (T.mounted ? 1.2 : 2));
+    this.events.push({ k: 'strike', x: foe.x, z: foe.z });
     if (s.alive) this.hurt(foe, dmg, s);
   }
 
@@ -285,22 +327,11 @@ export class Sim {
     let acc = R.acc[0] + (R.acc[1] - R.acc[0]) * u;
     if (tgt.T.mounted) acc *= 1.1;
     s.shotT = this.time;
-    if (R.kind === 'musket') {
-      const hit = this.rand() < acc;
-      if (hit) this.hurt(tgt, Math.max(1, R.dmg * (0.8 + this.rand() * 0.4) - tgt.T.armor), s);
-      this.events.push({ k: 'musket', x: s.x, y: s.y, z: s.z, yaw: s.yaw, hit, tx: tgt.x, tz: tgt.z });
-    } else if (R.kind === 'arrow') {
-      const hit = this.rand() < acc, miss = hit ? 0 : 2 + this.rand() * 5, a = this.rand() * 6.283;
-      const tx = tgt.x + Math.cos(a) * miss + tgt.vx * 0.6, tz = tgt.z + Math.sin(a) * miss + tgt.vz * 0.6;
-      this.projectiles.push({ k: 'arrow', team: s.team, src: s, tgt, hit, dmg: R.dmg, t: 0, T: d / 38 + 0.25,
-        x0: s.x, y0: s.y + 2.2, z0: s.z, x1: tx, y1: groundY(tx, tz) + (hit ? 1.2 : 0), z1: tz, arc: d * 0.12 });
-    } else {
-      const spread = d * (1 - acc) * 0.12, a = this.rand() * 6.283, r = Math.sqrt(this.rand()) * spread;
-      const tx = tgt.x + Math.cos(a) * r, tz = tgt.z + Math.sin(a) * r;
-      this.projectiles.push({ k: 'ball', team: s.team, src: s, dmg: R.dmg, splash: R.splash, t: 0, T: d / 120 + 0.6,
-        x0: s.x + Math.sin(s.yaw) * 1.6, y0: s.y + 1.1, z0: s.z + Math.cos(s.yaw) * 1.6, x1: tx, y1: groundY(tx, tz), z1: tz, arc: d * 0.08 });
-      this.events.push({ k: 'cannon', x: s.x, y: s.y, z: s.z, yaw: s.yaw });
-    }
+    const hit = this.rand() < acc, miss = hit ? 0 : 2 + this.rand() * 5, a = this.rand() * 6.283;
+    const tx = tgt.x + Math.cos(a) * miss + tgt.vx * 0.6, tz = tgt.z + Math.sin(a) * miss + tgt.vz * 0.6;
+    this.projectiles.push({ k: 'arrow', team: s.team, src: s, tgt, hit, dmg: R.dmg, t: 0, T: d / 38 + 0.25,
+      x0: s.x, y0: s.y + (s.T.mounted ? 2.2 : 1.5), z0: s.z, x1: tx, y1: groundY(tx, tz) + (hit ? 1.2 : 0), z1: tz, arc: d * 0.12 });
+    this.events.push({ k: 'shot', team: s.team, x: s.x, z: s.z });
   }
 
   updateProjectiles(dt) {
@@ -308,19 +339,7 @@ export class Sim {
     for (const p of this.projectiles) {
       p.t += dt;
       if (p.t < p.T) { keep.push(p); continue; }
-      if (p.k === 'arrow') { if (p.hit && p.tgt.alive) this.hurt(p.tgt, Math.max(1, p.dmg * (0.8 + this.rand() * 0.4) - p.tgt.T.armor * 0.5), p.src); }
-      else {
-        this.events.push({ k: 'impact', x: p.x1, y: p.y1, z: p.z1 });
-        const hitSq = new Set();
-        this.forNear(p.x1, p.z1, p.splash, (o) => {
-          if (!o.alive || o.team === p.team) return;
-          const d = Math.hypot(o.x - p.x1, o.z - p.z1);
-          if (d > p.splash) return;
-          hitSq.add(o.sq);
-          this.hurt(o, p.dmg * Math.pow(1 - d / p.splash, 0.7) * (0.8 + this.rand() * 0.4), p.src);
-        });
-        for (const sq of hitSq) sq.morale -= 1.5;
-      }
+      if (p.hit && p.tgt.alive) this.hurt(p.tgt, Math.max(1, p.dmg * (0.8 + this.rand() * 0.4) * (p.tgt.T.shield ? 0.55 : 1) - p.tgt.T.armor * 0.5), p.src);
     }
     this.projectiles = keep;
   }
@@ -333,11 +352,16 @@ export class Sim {
 
   kill(s, by) {
     s.alive = false; s.deadT = this.time; s.target = null;
-    const sq = s.sq, idx = sq.alive.indexOf(s);
+    const sq = s.sq, idx = sq.alive.indexOf(s), tm = this.teams[s.team];
     if (idx >= 0) { sq.alive.splice(idx, 1); for (let i = idx; i < sq.alive.length; i++) sq.alive[i].slot = i; }
-    sq.morale -= (100 / sq.initial) * 1.4 + 0.3;
+    sq.morale -= ((100 / sq.initial) * 1.4 + 0.3) * (sq.aura ? 0.65 : 1);
     if (sq.banner === s) sq.banner = sq.alive[Math.floor(sq.alive.length / 2)] || null;
-    this.teams[s.team].alive--; this.teams[s.team].losses++;
+    if (s.isCmd) {
+      tm.cmd = null; tm.cmdDead = true;
+      for (const q of this.squads) if (q.team === s.team && !q.dead) q.morale -= 20;
+      this.events.push({ k: 'cmdDead', team: s.team, name: s.T.commander.name, x: s.x, z: s.z });
+    }
+    tm.alive--; tm.losses++;
     if (by) { this.teams[by.team].kills++; by.sq.kills++; }
     this.events.push({ k: 'death', s });
   }
