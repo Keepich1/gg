@@ -141,6 +141,25 @@ export class BattleAudio {
     n.connect(bp).connect(g).connect(out);
   }
 
+  // Axe on wood, pick on stone and gold, sickle in the field.
+  work(x, z, res) {
+    const a = this.att(x, z); if (a < 0.06) return;
+    const ctx = this.ctx, t = ctx.currentTime + 0.01, out = this.bus(x, z, Math.min(0.35, a * 0.25));
+    if (res === 'wood') {
+      const o = ctx.createOscillator(), g = ctx.createGain(); o.frequency.setValueAtTime(rnd(160, 220), t); o.frequency.exponentialRampToValueAtTime(70, t + 0.09);
+      g.gain.setValueAtTime(0.9, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.12); o.connect(g).connect(out); o.start(t); o.stop(t + 0.14);
+    } else if (res === 'food') {
+      const n = this.noiseSrc(t, 0.25), hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 3500;
+      const g = ctx.createGain(); g.gain.setValueAtTime(0.3, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.22); n.connect(hp).connect(g).connect(out);
+      return;
+    } else {
+      const o = ctx.createOscillator(), g = ctx.createGain(); o.frequency.value = rnd(1700, 2700) * (res === 'gold' ? 1.25 : 1);
+      g.gain.setValueAtTime(0.6, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.14); o.connect(g).connect(out); o.start(t); o.stop(t + 0.16);
+    }
+    const n = this.noiseSrc(t, 0.03), bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = res === 'wood' ? 900 : 2500;
+    const ng = ctx.createGain(); ng.gain.value = 0.6; n.connect(bp).connect(ng).connect(out);
+  }
+
   // Called once per frame with the simulation's events.
   onEvents(events, sim, dt) {
     if (!this.ctx || this.muted) return;
@@ -151,7 +170,10 @@ export class BattleAudio {
       else if (e.k === 'cry') { this.horn(e.x, e.z, fac(e.team), 1.4); setTimeout(() => this.shout(e.x, e.z, fac(e.team), 60, true), 500); }
       else if (e.k === 'shot') this.shotAcc.push(e);
       else if (e.k === 'strike') strikes++;
+      else if (e.k === 'work' && (this.workBudget || 0) >= 1) { this.work(e.x, e.z, e.res); this.workBudget--; }
+      else if (e.k === 'raid') this.horn(this.lx, this.lz - 260, 'kipchak', 2.2);
     }
+    this.workBudget = Math.min(3, (this.workBudget || 0) + dt * 5);
     // arrows: one whoosh per ~0.3 s for the volley nearest to the camera
     this.volleyT -= dt;
     if (this.volleyT <= 0 && this.shotAcc.length) {

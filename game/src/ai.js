@@ -51,6 +51,11 @@ export class AI {
         else moveTo(sq, cx - Math.sin(toEnemy) * 55, cz - Math.cos(toEnemy) * 55, toEnemy);
         continue;
       }
+      if (T.artillery) {
+        if (d > T.ranged.range * 0.9) moveTo(sq, near.mx - Math.sin(face) * T.ranged.range * 0.8, near.mz - Math.cos(face) * T.ranged.range * 0.8, face);
+        else attack(sq, near);
+        continue;
+      }
       if (sim.shoots(sq) && !T.mounted) {
         // foot archers: don't chase riders that out-range us
         if (near.T.mounted && sim.shoots(near) && near.T.ranged.range > T.ranged.range && d > T.ranged.range) { if (sq.order.kind !== 'idle') sim.order(sq, { kind: 'idle', face }); }

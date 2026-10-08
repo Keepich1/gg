@@ -85,3 +85,37 @@ export const rng = (seed) => () => {
   t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 };
+
+// ---------- city mode layout ----------
+export const BASES = { player: [-40, 560], enemy: [40, -400] };
+// Mineable deposits: [kind, x, z]. Player side first, then contested ground and the enemy side.
+export const DEPOSITS = [
+  ['stone', 110, 515], ['stone', -235, 485], ['gold', 40, 410], ['gold', -300, 360],
+  ['stone', 205, 300], ['gold', 225, 130], ['stone', -260, 120], ['gold', -60, 60],
+  ['stone', -130, -320], ['gold', 170, -290],
+];
+const nearAny = (x, z, pts, r) => pts.some(([px, pz]) => (x - px) ** 2 + (z - pz) ** 2 < r * r);
+// Forest groves near the player's base so wood is close at hand.
+const GROVES = [[-175, 620, 42], [195, 650, 38], [-95, 705, 34], [250, 545, 30], [-310, 560, 36], [70, 720, 30], [-20, 430, 22]];
+
+// Tree spots for rendering and wood gathering: [kind, x, y, z, scale]
+export function treeSpots() {
+  const out = [], clear = [BASES.player, BASES.enemy];
+  const ok = (x, z) => !nearAny(x, z, clear, 75) && !nearAny(x, z, DEPOSITS.map(([, a, b]) => [a, b]), 12);
+  for (let z = -HALF + 6; z < HALF - 6; z += 9) for (let x = -HALF + 6; x < HALF - 6; x += 9) {
+    const jx = x + (noise(x * 0.7, z * 0.3) - 0.5) * 8, jz = z + (noise(x * 0.3, z * 0.7) - 0.5) * 8;
+    const h = groundY(jx, jz), s = slopeAt(jx, jz), m = mountainW(jx, jz), n = fbm(jx * 0.01, jz * 0.01, 3);
+    if (h < WATER_Y + 0.6 || !ok(jx, jz)) continue;
+    const dr = Math.abs(jx - riverX(jz));
+    if (m > 0.15 && h < 150 && s < 0.9 && n > 0.42) out.push(['pine', jx, h, jz, 0.8 + noise(jx, jz) * 0.6]);
+    else if (dr > 24 && dr < 40 && noise(jz * 0.08, 3) > 0.3) out.push(['poplar', jx, h, jz, 0.8 + noise(jz, jx) * 0.4]);
+    else if (m < 0.05 && n > 0.66 && noise(jx * 0.05, jz * 0.05) > 0.55) out.push(['elm', jx, h, jz, 0.7 + noise(jx, jz) * 0.6]);
+  }
+  for (const [cx, cz, r] of GROVES) for (let z = cz - r; z <= cz + r; z += 5.5) for (let x = cx - r; x <= cx + r; x += 5.5) {
+    const jx = x + (noise(x * 0.9, z * 0.4) - 0.5) * 4, jz = z + (noise(x * 0.4, z * 0.9) - 0.5) * 4;
+    const d = Math.hypot(jx - cx, jz - cz) / r;
+    if (d > 1 || noise(jx * 0.12, jz * 0.12) < 0.25 + d * 0.35 || !ok(jx, jz) || groundY(jx, jz) < WATER_Y + 0.6) continue;
+    out.push([noise(jx, jz * 2) > 0.6 ? 'poplar' : 'elm', jx, groundY(jx, jz), jz, 0.75 + noise(jx, jz) * 0.5]);
+  }
+  return out;
+}

@@ -1,6 +1,6 @@
 // Terrain, water, forests and sky meshes built from the heightfield in world.js.
 import * as THREE from '../vendor/three.module.min.js';
-import { SIZE, HALF, RES, STEP, WATER_Y, grid, groundY, slopeAt, fbm, noise, riverX, mountainW } from './world.js';
+import { SIZE, HALF, RES, STEP, WATER_Y, grid, groundY, slopeAt, fbm, noise, riverX, mountainW, treeSpots } from './world.js';
 
 const C = (hex) => new THREE.Color(hex);
 const PAL = {
@@ -131,27 +131,20 @@ export function buildTrees() {
     part(new THREE.SphereGeometry(1, 8, 6), '#4f7a36', 0, 8, 0, 0, 0, 0, 1.5, 6.5, 1.5)]);
   const elm = mergeGeos([part(new THREE.CylinderGeometry(0.25, 0.4, 3, 5), '#5a4330', 0, 1.5),
     part(new THREE.SphereGeometry(3, 8, 6), '#56803b', 0, 5, 0, 0, 0, 0, 1, 0.8, 1), part(new THREE.SphereGeometry(2, 7, 5), '#6a9447', 1, 6.3, 0.6)]);
-  const spots = { pine: [], poplar: [], elm: [] };
-  for (let z = -HALF + 6; z < HALF - 6; z += 9) for (let x = -HALF + 6; x < HALF - 6; x += 9) {
-    const jx = x + (noise(x * 0.7, z * 0.3) - 0.5) * 8, jz = z + (noise(x * 0.3, z * 0.7) - 0.5) * 8;
-    const h = groundY(jx, jz), s = slopeAt(jx, jz), m = mountainW(jx, jz), n = fbm(jx * 0.01, jz * 0.01, 3);
-    if (h < WATER_Y + 0.6) continue;
-    const dr = Math.abs(jx - riverX(jz));
-    if (m > 0.15 && h < 150 && s < 0.9 && n > 0.42) spots.pine.push([jx, h, jz, 0.8 + noise(jx, jz) * 0.6]);
-    else if (dr > 24 && dr < 40 && noise(jz * 0.08, 3) > 0.3) spots.poplar.push([jx, h, jz, 0.8 + noise(jz, jx) * 0.4]);
-    else if (m < 0.05 && n > 0.66 && noise(jx * 0.05, jz * 0.05) > 0.55) spots.elm.push([jx, h, jz, 0.7 + noise(jx, jz) * 0.6]);
-  }
+  const spots = { pine: [], poplar: [], elm: [] }, all = treeSpots();
+  all.forEach(([kind, x, y, z, sc], n) => spots[kind].push([x, y, z, sc, n]));
   const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
-  const grp = new THREE.Group(), dummy = new THREE.Object3D(), col = new THREE.Color();
+  const grp = new THREE.Group(), dummy = new THREE.Object3D(), col = new THREE.Color(), trees = [];
   for (const [key, geo] of [['pine', pine], ['poplar', poplar], ['elm', elm]]) {
     const list = spots[key], mesh = new THREE.InstancedMesh(geo, mat, list.length);
-    list.forEach(([x, y, z, s], i) => {
+    list.forEach(([x, y, z, s, n], i) => {
       dummy.position.set(x, y - 0.3, z); dummy.rotation.set(0, noise(x, z) * 6, 0); dummy.scale.setScalar(s); dummy.updateMatrix();
       mesh.setMatrixAt(i, dummy.matrix); mesh.setColorAt(i, col.setScalar(0.85 + noise(z, x) * 0.3));
+      trees[n] = { x, z, mesh, idx: i };
     });
     mesh.castShadow = true; mesh.receiveShadow = false;
     grp.add(mesh);
   }
-  grp.userData.count = spots.pine.length + spots.poplar.length + spots.elm.length;
+  grp.userData.trees = trees; // indexed like treeSpots(), so the economy can fell them
   return grp;
 }

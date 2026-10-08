@@ -1,21 +1,12 @@
 // HTML interface: army bars, unit cards, order buttons, minimap, message feed, start and end screens.
 import { FORMATIONS, FACTIONS, TYPES, formationsFor } from './units.js';
 import { CRY_COOLDOWN } from './sim.js';
+import { icon } from './icons.js';
+import { CityPanel } from './hudCity.js';
 import { groundColor } from './terrain.js';
 import { HALF, SIZE, groundY, WATER_Y } from './world.js';
 
 const $ = (id) => document.getElementById(id);
-const ICONS = {
-  musket: '<path d="M3 21L19 5M17 3l4 4M6 15l3 3" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round"/>',
-  spear: '<path d="M4 20L18 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M18 6l3-3-1 5z" fill="currentColor"/><circle cx="8" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="2"/>',
-  cannon: '<circle cx="8" cy="17" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 17L21 9" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>',
-  cav: '<path d="M4 13c2-3 6-3 9-2l4-5 3 1-1 4-2 1v3c0 2-1 3-2 3v3h-2v-3H9v3H7v-3c-2 0-3-2-3-5z" fill="currentColor"/>',
-  bow: '<path d="M6 3c9 3 12 12 15 18" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M6 3l15 18M4 14l12-6" stroke="currentColor" stroke-width="1.4"/>',
-  shield: '<path d="M12 3l7 3v5c0 5-3 8-7 10-4-2-7-5-7-10V6z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 16L18 4" stroke="currentColor" stroke-width="1.8"/>',
-  crown: '<path d="M3 18l2-10 5 5 2-7 2 7 5-5 2 10z" fill="currentColor"/><path d="M4 21h16" stroke="currentColor" stroke-width="2"/>',
-  lance: '<path d="M3 21L20 4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M20 4l1-1-1 5-3-1z" fill="currentColor"/><path d="M14 6l4 1-3 3z" fill="currentColor"/>',
-};
-const icon = (k) => `<svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[k]}</svg>`;
 const STATE = (q) => q.dead ? 'Разбит' : q.state === 'rout' ? 'Бегут' : q.kiting ? 'Качып атуу' : q.lastEngaged > 0 ? 'Рукопашная'
   : q.fireTarget && !q.meleeMode ? 'Стреляют' : q.stam < 30 ? 'Устали' : q.moving ? (q.running ? 'Бегом' : 'Марш') : q.order.kind === 'hold' ? 'Стоят' : 'Ждут';
 const fmt = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
@@ -56,11 +47,15 @@ export class HUD {
     });
     mm.addEventListener('pointermove', (e) => { if (this.mmDrag) rts.centerOn(...mmPoint(e)); });
     mm.addEventListener('pointerup', () => { this.mmDrag = false; });
+    this.cityPanel = new CityPanel({ input });
     this.buildMenu();
   }
 
-  attach(sim) {
-    this.sim = sim; this.feed = []; $('feed').innerHTML = '';
+  attach(sim, city = null) {
+    this.sim = sim; this.city = city; this.feed = []; $('feed').innerHTML = ''; this.mmBase = null;
+    document.body.classList.toggle('city', !!city);
+    $('subtitle').textContent = city ? 'город · демо' : 'поле боя · прототип';
+    if (city) this.cityPanel.attach(sim, city); else this.cityPanel.city = null;
     const [a, b] = sim.teams;
     $('f0').textContent = a.faction.name; $('f1').textContent = b.faction.name;
     document.documentElement.style.setProperty('--me', a.faction.color);
@@ -72,6 +67,7 @@ export class HUD {
 
   renderCards() {
     const sim = this.sim; if (!sim) return;
+    if (this.city) { this.cityPanel.render(); return; }
     const mine = sim.squads.filter((q) => q.team === this.input.team);
     const grp = (q) => Object.entries(this.input.groups).filter(([, g]) => g.includes(q)).map(([k]) => k).join('');
     $('cards').innerHTML = mine.map((q) => `<button type="button" class="card${q.T.commander ? ' cmd' : ''}" data-id="${q.id}" id="card-${q.id}" title="${q.T.name}: ${q.T.sub}">
@@ -121,6 +117,8 @@ export class HUD {
       if (e.k === 'noAmmo') this.say(e.sq.team === this.input.team ? `«${e.sq.T.name}»: стрелы кончились, взялись за сабли` : `У врага кончились стрелы: «${e.sq.T.name}»`, e.sq.team === this.input.team ? '' : 'good');
       if (e.k === 'cry') this.say(e.team === this.input.team ? 'Боевой клич! Дух и силы отрядов рядом с командиром выросли' : 'Враг поднял боевой клич', e.team === this.input.team ? 'good' : 'bad');
       if (e.k === 'cmdDead') this.say(e.team === this.input.team ? `Наш ${e.name.toLowerCase()} погиб! Мораль армии падает` : `Вражеский ${e.name.toLowerCase()} убит!`, e.team === this.input.team ? 'bad' : 'good');
+      if (e.k === 'formed') this.say(`Юзбоши собрал отряд: ${e.sq.T.name}, ${e.sq.alive.length} человек`, 'good');
+      if (e.k === 'officerDead') this.say(e.sq.team === this.input.team ? `Юзбоши погиб, отряд «${e.sq.T.name}» дрогнул` : 'Вражеский офицер убит', e.sq.team === this.input.team ? 'bad' : 'good');
       if (e.k === 'end') this.showEnd(e.result);
     }
   }
@@ -143,7 +141,8 @@ export class HUD {
       $('fps').textContent = `${fps.toFixed(0)} FPS · ${this.sim.soldiers.length} бойцов`;
       $('pause').textContent = paused ? '▶' : '❚❚'; $('pause').setAttribute('aria-pressed', paused);
       $('speed').textContent = '×' + speed;
-      this.updateCards();
+      if (this.city) { this.cityPanel.update(); for (const m of this.city.eco.msgs.splice(0)) this.say(m.text, m.cls); }
+      else this.updateCards();
     }
     if (this.mt <= 0) { this.mt = 0.12; this.drawMinimap(); }
   }
@@ -163,6 +162,14 @@ export class HUD {
     }
     g.drawImage(this.mmBase, 0, 0);
     const m = (x, z) => [((x + HALF) / SIZE) * S, ((z + HALF) / SIZE) * S];
+    if (this.city) {
+      for (const n of this.city.eco.nodes) if (n.amount > 0) { const [x, y] = m(n.x, n.z); g.fillStyle = n.kind === 'gold' ? '#f2c14e' : '#c9c6bd'; g.fillRect(x - 2, y - 2, 4, 4); }
+      for (const b of this.sim.buildings) {
+        if (b.dead) continue;
+        const [x, y] = m(b.x - b.w / 2, b.z - b.d / 2), w = (b.w / SIZE) * S + 2, h = (b.d / SIZE) * S + 2;
+        g.fillStyle = b.team === this.input.team ? (b.T.field ? '#d9c070' : '#f1ead6') : '#ff8a7a'; g.fillRect(x, y, w, h);
+      }
+    }
     for (const q of this.sim.squads) {
       if (q.dead) continue;
       const [x, y] = m(q.mx, q.mz), mine = q.team === this.input.team;
@@ -187,17 +194,36 @@ export class HUD {
         <span class="side-go">Играть за ${F.name}</span></button>`;
     };
     $('sides').innerHTML = card('kokand') + card('kipchak');
-    $('sides').addEventListener('click', (e) => { const b = e.target.closest('.side'); if (b) { $('menu').hidden = true; this.onStart(b.dataset.side); } });
+    $('sides').addEventListener('click', (e) => { const b = e.target.closest('.side'); if (b) { $('menu').hidden = true; this.onStart('battle', { side: b.dataset.side }); } });
+    this.peace = 480;
+    $('peace').addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-peace]'); if (!b) return;
+      this.peace = +b.dataset.peace;
+      $('peace').querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+    });
+    $('go-city').addEventListener('click', () => { $('menu').hidden = true; this.onStart('city', { peace: this.peace }); });
   }
 
   showEnd(r) {
     const me = this.input.team, win = r.winner === me, [a, b] = this.sim.teams;
+    if (r.city) {
+      $('end-body').innerHTML = `<h2 class="${win ? 'win' : 'lose'}">${win ? 'Победа' : 'Поражение'}</h2>
+        <p>${win ? 'Хан ордосу разрушена, кыпчаки откочевали.' : 'Урда пала.'} Игра длилась ${fmt(r.time)}.</p>
+        <table><thead><tr><th></th><th>Потери</th><th>Убито врагов</th></tr></thead><tbody>
+        <tr><td>${a.faction.name}</td><td>${a.losses}</td><td>${a.kills}</td></tr><tr><td>${b.faction.name}</td><td>${b.losses}</td><td>${b.kills}</td></tr></tbody></table>`;
+      $('endscreen').hidden = false;
+      $('again').textContent = 'Ещё раз'; $('swap').textContent = 'В меню';
+      $('again').onclick = () => { $('endscreen').hidden = true; this.onStart('city', { peace: this.peace }); };
+      $('swap').onclick = () => { $('endscreen').hidden = true; $('menu').hidden = false; };
+      return;
+    }
+    $('again').textContent = 'Ещё раз'; $('swap').textContent = 'Сменить сторону';
     const row = (t) => `<tr><td>${t.faction.name}</td><td>${t.initial}</td><td>${t.losses}</td><td>${t.kills}</td></tr>`;
     $('end-body').innerHTML = `<h2 class="${win ? 'win' : 'lose'}">${win ? 'Победа' : 'Поражение'}</h2>
       <p>Бой длился ${fmt(r.time)}.</p>
       <table><thead><tr><th></th><th>Было</th><th>Потери</th><th>Убито врагов</th></tr></thead><tbody>${row(a)}${row(b)}</tbody></table>`;
     $('endscreen').hidden = false;
-    $('again').onclick = () => { $('endscreen').hidden = true; this.onStart(a.key); };
-    $('swap').onclick = () => { $('endscreen').hidden = true; this.onStart(b.key); };
+    $('again').onclick = () => { $('endscreen').hidden = true; this.onStart('battle', { side: a.key }); };
+    $('swap').onclick = () => { $('endscreen').hidden = true; this.onStart('battle', { side: b.key }); };
   }
 }

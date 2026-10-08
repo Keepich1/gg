@@ -1,0 +1,27 @@
+// Small inline SVG icons for the interface.
+export const ICONS = {
+  musket: '<path d="M3 21L19 5M17 3l4 4M6 15l3 3" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round"/>',
+  spear: '<path d="M4 20L18 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M18 6l3-3-1 5z" fill="currentColor"/><circle cx="8" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="2"/>',
+  cannon: '<circle cx="8" cy="17" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 17L21 9" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>',
+  cav: '<path d="M4 13c2-3 6-3 9-2l4-5 3 1-1 4-2 1v3c0 2-1 3-2 3v3h-2v-3H9v3H7v-3c-2 0-3-2-3-5z" fill="currentColor"/>',
+  bow: '<path d="M6 3c9 3 12 12 15 18" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M6 3l15 18M4 14l12-6" stroke="currentColor" stroke-width="1.4"/>',
+  shield: '<path d="M12 3l7 3v5c0 5-3 8-7 10-4-2-7-5-7-10V6z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 16L18 4" stroke="currentColor" stroke-width="1.8"/>',
+  crown: '<path d="M3 18l2-10 5 5 2-7 2 7 5-5 2 10z" fill="currentColor"/><path d="M4 21h16" stroke="currentColor" stroke-width="2"/>',
+  lance: '<path d="M3 21L20 4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M20 4l1-1-1 5-3-1z" fill="currentColor"/><path d="M14 6l4 1-3 3z" fill="currentColor"/>',
+  worker: '<path d="M4 20L14 10M12 6l6 6 3-3-6-6z" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linejoin="round"/>',
+  officer: '<path d="M6 21V3M6 4h11l-3 4 3 4H6" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round"/>',
+  food: '<path d="M12 21V8M12 12c-3 0-5-2-5-5 3 0 5 2 5 5zm0 0c3 0 5-2 5-5-3 0-5 2-5 5zm0 5c-3 0-5-2-5-5 3 0 5 2 5 5zm0 0c3 0 5-2 5-5-3 0-5 2-5 5z" fill="currentColor"/>',
+  wood: '<rect x="3" y="12" width="17" height="6" rx="3" fill="currentColor"/><rect x="5" y="5" width="16" height="6" rx="3" fill="currentColor" opacity=".7"/>',
+  stone: '<path d="M3 19l3-8 6-3 4 4-1 7zM12 19l3-9 5-1 2 6-2 4z" fill="currentColor"/>',
+  gold: '<circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="2.4"/><rect x="9.6" y="9.6" width="4.8" height="4.8" fill="currentColor"/>',
+  people: '<circle cx="9" cy="7" r="3" fill="currentColor"/><path d="M3 20c0-5 3-8 6-8s6 3 6 8z" fill="currentColor"/><circle cx="17" cy="8" r="2.4" fill="currentColor" opacity=".7"/><path d="M14 13c3-1 7 1 7 7h-5" fill="currentColor" opacity=".7"/>',
+  uy: '<path d="M4 20v-9h16v9zM3 11l9-6 9 6" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round"/><rect x="10" y="14" width="4" height="6" fill="currentColor"/>',
+  dala: '<path d="M3 18h18M3 13h18M3 8h18" stroke="currentColor" stroke-width="2.4"/><path d="M6 6v14M12 6v14M18 6v14" stroke="currentColor" stroke-width="1" opacity=".5"/>',
+  tegirmon: '<rect x="5" y="9" width="10" height="11" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="18" cy="13" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M18 9v8M14 13h8" stroke="currentColor" stroke-width="1.4"/>',
+  ombor: '<path d="M3 20V10l9-5 9 5v10z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><rect x="8" y="13" width="8" height="7" fill="currentColor"/>',
+  kazarma: '<path d="M3 20V9h3V6h3v3h2V6h2v3h2V6h3v3h3v11z" fill="currentColor"/>',
+  otxona: '<path d="M4 13c2-3 6-3 9-2l4-5 3 1-1 4-2 1v3c0 2-1 3-2 3v3h-2v-3H9v3H7v-3c-2 0-3-2-3-5z" fill="currentColor"/>',
+  topxona: '<circle cx="8" cy="17" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 17L21 9" stroke="currentColor" stroke-width="4" stroke-linecap="round"/><path d="M17 3v4" stroke="currentColor" stroke-width="2"/>',
+  urda: '<path d="M3 20v-8h18v8zM6 12c0-4 3-7 6-7s6 3 6 7" fill="currentColor"/><path d="M12 2v3" stroke="currentColor" stroke-width="2"/>'
+};
+export const icon = (k) => `<svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[k]}</svg>`;

@@ -8,6 +8,10 @@ import { RTSCamera } from './camera.js';
 import { Input } from './input.js';
 import { HUD } from './hud.js';
 import { BattleAudio } from './audio.js';
+import { Economy } from './economy.js';
+import { RaidAI } from './raid.js';
+import { CityRenderer } from './renderCity.js';
+import { BASES } from './world.js';
 
 const canvas = document.getElementById('view');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
@@ -23,29 +27,58 @@ const hemi = new THREE.HemisphereLight('#dbe8f5', '#6f6142', 1.25);
 const sun = new THREE.DirectionalLight('#fff0d8', 2.6);
 sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048); sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.5;
 scene.add(hemi, sun, sun.target);
-scene.add(buildSky(), buildOuterGround(), buildTerrain(), buildWater(), buildTrees());
+scene.add(buildSky(), buildOuterGround(), buildTerrain(), buildWater());
+let trees = buildTrees(); scene.add(trees);
 
 const rts = new RTSCamera(camera, canvas);
-let sim = null, ai = null, r3d = null, paused = false, speed = 1;
+let sim = null, ai = null, r3d = null, city = null, paused = false, speed = 1;
 const SPEEDS = [0.5, 1, 2, 3];
 const audio = new BattleAudio();
 const input = new Input({ dom: canvas, rts, scene, onChange: () => hud.renderCards() });
 const hud = new HUD({
   input, rts,
-  onStart: (side) => start(side),
+  onStart: (mode, opt) => (mode === 'city' ? startCity(opt) : start(opt.side)),
   onPause: () => { paused = !paused; },
   onSpeed: () => { speed = SPEEDS[(SPEEDS.indexOf(speed) + 1) % SPEEDS.length]; },
   onMute: () => { audio.setMuted(!audio.muted); return audio.muted; },
 });
 
+function cleanup() {
+  if (r3d) { scene.remove(r3d.root); r3d.root.traverse((o) => { o.geometry?.dispose(); }); r3d = null; }
+  if (city) { scene.remove(city.cityR.root); city = null; }
+  input.stopPlacing?.();
+}
+
+function startCity({ peace = 480 } = {}) {
+  cleanup();
+  // fresh forest: trees felled in the previous game grow back
+  scene.remove(trees); trees = buildTrees(); scene.add(trees);
+  sim = new Sim({ factions: ['kokand', 'kipchak'], seed: (Date.now() % 100000) + 1, mode: 'city' });
+  const eco = new Economy(sim);
+  eco.setupPlayer();
+  const raid = new RaidAI(sim, eco, { peace });
+  ai = null;
+  r3d = new Renderer3D(scene, sim);
+  const cityR = new CityRenderer(scene, sim, eco, trees.userData.trees);
+  cityR.onSmoke = (x, y, z, k) => r3d.puff(x, y, z, k);
+  sim.events.length = 0;
+  city = { eco, raid, cityR };
+  input.attach(sim, r3d, 0, city);
+  hud.attach(sim, city);
+  rts.yaw = 0; rts.dist = 150; rts.centerOn(BASES.player[0], BASES.player[1] + 12);
+  paused = false; speed = 1;
+  audio.init();
+  setTimeout(() => audio.horn(rts.tx, rts.tz, 'kokand', 0.8), 400);
+}
+
 function start(side) {
-  if (r3d) { scene.remove(r3d.root); r3d.root.traverse((o) => { o.geometry?.dispose(); }); }
+  cleanup();
   const other = side === 'kokand' ? 'kipchak' : 'kokand';
   sim = new Sim({ factions: [side, other], seed: (Date.now() % 100000) + 1 });
   ai = new AI(sim, 1);
   r3d = new Renderer3D(scene, sim);
-  input.attach(sim, r3d, 0);
-  hud.attach(sim);
+  input.attach(sim, r3d, 0, null);
+  hud.attach(sim, null);
   const mine = sim.squads.filter((q) => q.team === 0);
   rts.yaw = 0; rts.dist = 240;
   rts.centerOn(mine.reduce((a, q) => a + q.cx, 0) / mine.length, mine.reduce((a, q) => a + q.cz, 0) / mine.length - 40);
@@ -82,7 +115,10 @@ function frame() {
   if (sim && !paused && !sim.result) {
     simDt = dt * speed;
     const n = Math.ceil(simDt / 0.034), h = simDt / n;
-    for (let i = 0; i < n; i++) { ai.update(h); sim.step(h); }
+    for (let i = 0; i < n; i++) {
+      if (city) { city.eco.update(h); city.raid.update(h); } else ai.update(h);
+      sim.step(h);
+    }
   }
   if (sim) {
     audio.listener(rts.tx, rts.tz, rts.dist, rts.yaw);
@@ -90,6 +126,7 @@ function frame() {
     bedT -= dt; if (bedT <= 0) { bedT = 0.2; audio.updateBeds(sim); }
     r3d.onEvents(sim.events); hud.onEvents(sim.events); sim.events.length = 0;
     r3d.update(simDt, camera, renderer.domElement.height);
+    if (city) city.cityR.update(simDt);
     hud.update(dt, fps, paused, speed);
   }
   // keep the shadow box around what the camera looks at
@@ -100,4 +137,4 @@ function frame() {
   renderer.render(scene, camera);
 }
 frame();
-window.__game = { get sim() { return sim; }, rts, start };
+window.__game = { get sim() { return sim; }, get city() { return city; }, rts, start, startCity, input };

@@ -1,6 +1,7 @@
 // Mouse and keyboard: select squads, give orders, formations, control groups.
 import * as THREE from '../vendor/three.module.min.js';
 import { frontage, formationsFor } from './units.js';
+import { BUILDINGS } from './buildings.js';
 import { groundY } from './world.js';
 
 const PICK = 26; // px
@@ -22,8 +23,9 @@ export class Input {
     addEventListener('keydown', (e) => this.key(e));
   }
 
-  attach(sim, r3d, team = 0) {
+  attach(sim, r3d, team = 0, city = null) {
     this.sim = sim; this.r3d = r3d; this.team = team; this.sel = r3d.selected; this.groups = {};
+    this.city = city; this.selB = null; this.placing = null;
     this.sel.clear(); this.run = false; this.onChange();
   }
 
@@ -46,6 +48,7 @@ export class Input {
 
   select(list, add = false) {
     if (!add) this.sel.clear();
+    this.selectBuilding(null, true);
     for (const sq of list) if (!sq.dead && sq.team === this.team) this.sel.add(sq);
     this.onChange();
   }
@@ -54,6 +57,11 @@ export class Input {
   down(e) {
     if (!this.sim) return;
     const [x, y] = this.pos(e);
+    if (this.placing) {
+      if (e.button === 0) this.placeAt(x, y, e.shiftKey);
+      else if (e.button === 2) this.stopPlacing();
+      return;
+    }
     if (e.button === 0) { this.ldrag = { x0: x, y0: y, x1: x, y1: y, shift: e.shiftKey }; this.dom.setPointerCapture(e.pointerId); }
     if (e.button === 2) {
       const g = this.rts.groundAt(x, y);
@@ -63,6 +71,12 @@ export class Input {
   }
   move(e) {
     const [x, y] = this.pos(e);
+    if (this.placing) {
+      const g = this.rts.groundAt(x, y);
+      if (g) { const px = Math.round(g.x), pz = Math.round(g.z); this.city.cityR.moveGhost(px, pz, this.city.eco.footprintOk(this.placing, px, pz).ok); }
+      else this.city.cityR.hideGhost();
+      return;
+    }
     if (this.ldrag) {
       Object.assign(this.ldrag, { x1: x, y1: y });
       const L = this.ldrag, w = Math.abs(L.x1 - L.x0), h = Math.abs(L.y1 - L.y0);
@@ -93,15 +107,24 @@ export class Input {
       } else {
         const s = this.soldierAt(x, y, false);
         if (s) { if (L.shift && this.sel.has(s.sq)) { this.sel.delete(s.sq); this.onChange(); } else this.select([s.sq], L.shift); }
-        else if (!L.shift) this.select([]);
+        else {
+          const g = this.city && this.rts.groundAt(x, y), b = g && this.city.eco.buildingAt(g.x, g.z, 0.5);
+          if (b) { this.sel.clear(); this.selectBuilding(b); }
+          else if (!L.shift) this.select([]);
+        }
       }
     }
     if (e.button === 2 && this.rdrag) {
       const R = this.rdrag; this.rdrag = null; this.line.visible = false;
-      const sqs = this.selectedLive(); if (!sqs.length) return;
+      if (this.city && this.selB && this.selB.team === this.team && !this.selB.dead && R.g0) { this.setRally(R.g0); return; }
+      let sqs = this.selectedLive(); if (!sqs.length) return;
       const now = performance.now(), run = now - (this.lastRight || 0) < 350;
       this.lastRight = now; this.run = run;
       const foe = this.soldierAt(x, y, true);
+      if (this.city && R.g0 && Math.hypot(x - R.x0, y - R.y0) < 12) {
+        sqs = this.cityOrder(sqs, R.g0, foe);
+        if (!sqs.length) { this.onChange(); return; }
+      }
       if (foe && Math.hypot(x - R.x0, y - R.y0) < 12) {
         for (const sq of sqs) this.sim.order(sq, { kind: 'attack', target: foe.sq, run });
         this.r3d.marker(foe.sq.mx, foe.sq.mz, '#ff6b5a');
@@ -121,6 +144,11 @@ export class Input {
 
   // Move several squads side by side to a point, facing away from where they are now.
   groupMove(sqs, x, z) {
+    if (this.city) for (const q of sqs) if (q.T.worker) this.city.eco.stopJob(q);
+    const solos = sqs.filter((q) => q.solo), forms = sqs.filter((q) => !q.solo);
+    if (solos.length) this.crowdMove(solos, x, z);
+    if (!forms.length) return;
+    sqs = forms;
     let cx = 0, cz = 0;
     for (const q of sqs) { cx += q.mx; cz += q.mz; }
     cx /= sqs.length; cz /= sqs.length;
@@ -128,6 +156,92 @@ export class Input {
     if (Math.hypot(x - cx, z - cz) < 8) face = sqs[0].face;
     this.placeAlong(sqs, x, z, face, null);
   }
+  // Single units gather in a loose block around the point.
+  crowdMove(sqs, x, z) {
+    let cx = 0, cz = 0;
+    for (const q of sqs) { cx += q.mx; cz += q.mz; }
+    cx /= sqs.length; cz /= sqs.length;
+    const face = Math.hypot(x - cx, z - cz) > 4 ? Math.atan2(x - cx, z - cz) : sqs[0].face;
+    const rx = -Math.cos(face), rz = Math.sin(face), fx = Math.sin(face), fz = Math.cos(face);
+    const cols = Math.ceil(Math.sqrt(sqs.length * 1.6)), sp = sqs.some((q) => q.T.mounted || q.T.artillery) ? 3.2 : 1.8;
+    const sorted = sqs.slice().sort((p, q) => (p.mx * rx + p.mz * rz) - (q.mx * rx + q.mz * rz));
+    sorted.forEach((q, i) => {
+      const c = i % cols, r = Math.floor(i / cols), lx = (c - (cols - 1) / 2) * sp, lz = -r * sp;
+      this.sim.order(q, { kind: 'move', x: x + rx * lx + fx * lz, z: z + rz * lx + fz * lz, face, run: this.run });
+    });
+    this.r3d.marker(x, z, '#c8f5b0');
+  }
+
+  // ---------- city mode ----------
+  // Right click in the city: workers gather or build, troops attack buildings. Returns squads still needing a plain order.
+  cityOrder(sqs, g, foe) {
+    const { eco } = this.city, workers = sqs.filter((q) => q.T.worker), rest = sqs.filter((q) => !q.T.worker);
+    const b = eco.buildingAt(g.x, g.z, 0.5), node = !b && eco.nodeAt(g.x, g.z, 3);
+    let left = rest;
+    if (b && b.team !== this.team && !b.dead) {
+      for (const q of rest) this.sim.order(q, { kind: 'attackB', b, run: this.run });
+      this.r3d.marker(b.x, b.z, '#ff6b5a', 2); left = [];
+    }
+    if (foe) return sqs; // fight
+    if (workers.length) {
+      if (node) {
+        workers.forEach((q, i) => {
+          let t = node;
+          if (node.tree && i > 0) t = eco.nearestNode('wood', node.x + (i % 3) * 3 - 3, node.z + Math.floor(i / 3) * 3, 25) || node;
+          eco.assignGather(q, t);
+        });
+        this.r3d.marker(node.x, node.z, '#ffd66b');
+        return left;
+      }
+      if (b && b.team === this.team && !b.dead) {
+        for (const q of workers) { if (!b.done) eco.assignBuild(q, b); else if (b.T.field) eco.assignGather(q, b); else this.groupMove([q], g.x, g.z); }
+        this.r3d.marker(b.x, b.z, '#ffd66b', 1.5);
+        return left;
+      }
+      return sqs.filter((q) => q.T.worker || left.includes(q));
+    }
+    return left;
+  }
+  selectBuilding(b, silent = false) {
+    this.selB = b && !b.dead ? b : null;
+    if (this.city) this.city.cityR.selected = this.selB;
+    if (!silent) this.onChange();
+  }
+  setRally(g) {
+    const { eco } = this.city, b = this.selB, tb = eco.buildingAt(g.x, g.z, 0.5), node = !tb && eco.nodeAt(g.x, g.z, 3);
+    b.rally = { x: g.x, z: g.z, node: node || null, b: tb && tb.team === this.team ? tb : null };
+    this.r3d.marker(g.x, g.z, '#7fe8c8');
+  }
+  startPlacing(key) {
+    if (!this.city) return;
+    this.placing = key; this.city.cityR.setGhost(key);
+    this.city.eco.say(`Где построить ${BUILDINGS[key].name.toLowerCase()}? ЛКМ — поставить, ПКМ — отмена`, '');
+  }
+  stopPlacing() { this.placing = null; this.city?.cityR.setGhost(null); }
+  placeAt(x, y, keep) {
+    const g = this.rts.groundAt(x, y); if (!g) return;
+    const builders = this.selectedLive().filter((q) => q.T.worker);
+    const b = this.city.eco.place(this.team, this.placing, Math.round(g.x), Math.round(g.z), builders);
+    if (b) { this.r3d.marker(b.x, b.z, '#ffd66b', 2); if (!keep) this.stopPlacing(); }
+  }
+  formSquad() {
+    const sqs = this.selectedLive(), off = sqs.find((q) => q.T.officer && q.solo);
+    if (!off) return;
+    const sq = this.sim.formSquad(off, sqs);
+    if (sq) this.select([sq]); else this.city?.eco.say('Нужен юзбоши и хотя бы двое бойцов одного рода рядом', 'bad');
+  }
+  disband() {
+    const out = [];
+    for (const q of this.selectedLive()) if (!q.solo) out.push(...this.sim.disband(q));
+    if (out.length) this.select(out);
+  }
+  selectIdleWorker() {
+    const idle = this.city?.eco.idleWorkers(this.team) || [];
+    if (!idle.length) return;
+    this.idleI = ((this.idleI || 0) + 1) % idle.length;
+    this.select([idle[this.idleI]]); this.focus([idle[this.idleI]]);
+  }
+
   // Drag a front line: squads spread along it and face perpendicular to it, away from the camera.
   lineOrder(sqs, a, b) {
     const dx = b.x - a.x, dz = b.z - a.z, len = Math.hypot(dx, dz);
@@ -156,7 +270,10 @@ export class Input {
   key(e) {
     if (!this.sim || /INPUT|TEXTAREA/.test(e.target.tagName)) return;
     const sqs = this.selectedLive();
-    if (e.code === 'KeyH') { for (const q of sqs) this.sim.order(q, { kind: 'hold', face: q.face }); this.onChange(); }
+    if (e.code === 'KeyH') { for (const q of sqs) { if (this.city && q.T.worker) this.city.eco.stopJob(q); this.sim.order(q, { kind: 'hold', face: q.face }); } this.onChange(); }
+    else if (e.code === 'KeyU' && this.city) { if (sqs.some((q) => q.T.officer && q.solo)) this.formSquad(); else this.disband(); }
+    else if (e.code === 'Period' && this.city) this.selectIdleWorker();
+    else if (e.code === 'Escape' && this.placing) this.stopPlacing();
     else if (e.code === 'KeyF') this.cycleFormation(sqs);
     else if (e.code === 'KeyG') this.toggleSkirmish(sqs);
     else if (e.code === 'KeyR') this.toggleMelee(sqs);
