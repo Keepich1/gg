@@ -121,7 +121,7 @@ export class CityPanel {
     for (const q of this.input.selectedLive()) {
       const el = document.getElementById('fchip-' + q.id); if (!el) continue;
       el.querySelector('.fn').textContent = `${q.alive.length}/${q.initial}`;
-      const m = el.querySelector('.mor > i'); m.style.width = q.morale + '%'; m.style.background = q.morale > 60 ? '#7cc46b' : q.morale > 35 ? '#e0b44a' : '#e0645a';
+      const m = el.querySelector('.mor > i'); m.style.width = q.morale + '%'; m.style.background = q.morale > 60 ? '#8fb04a' : q.morale > 35 ? '#d9a23b' : '#c0452f';
     }
   }
 }

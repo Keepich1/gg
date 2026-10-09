@@ -11,6 +11,16 @@ const STATE = (q) => q.dead ? 'Разбит' : q.state === 'rout' ? 'Бегут'
   : q.fireTarget && !q.meleeMode ? 'Стреляют' : q.stam < 30 ? 'Устали' : q.moving ? (q.running ? 'Бегом' : 'Марш') : q.order.kind === 'hold' ? 'Стоят' : 'Ждут';
 const fmt = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
 
+// Small engraved glyphs for the system buttons in the top beam.
+const SYS_PATHS = {
+  pause: '<path d="M7 5h3.2v14H7zM13.8 5H17v14h-3.2z" fill="currentColor"/>',
+  play: '<path d="M7 4l12 8-12 8z" fill="currentColor"/>',
+  sound: '<path d="M3 9.5h3.5L15 5v14l-8.5-4.5H3z" fill="currentColor"/><path d="M18 8.5c1.4 2 1.4 5 0 7M20.5 6c2.4 3.4 2.4 8.6 0 12" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/>',
+  mute: '<path d="M3 9.5h3.5L15 5v14l-8.5-4.5H3z" fill="currentColor"/><path d="M18 9l5 6M23 9l-5 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
+  help: '<path d="M5 3h11l3 3v15H5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M8 9h8M8 13h8M8 17h5" stroke="currentColor" stroke-width="1.6"/>',
+};
+const SYS_ICON = (k) => `<svg viewBox="0 0 24 24" aria-hidden="true">${SYS_PATHS[k]}</svg>`;
+
 export class HUD {
   constructor({ input, rts, onStart, onPause, onSpeed, onMute }) {
     Object.assign(this, { input, rts, onStart, onPause, onSpeed, onMute });
@@ -34,7 +44,8 @@ export class HUD {
     $('pause').addEventListener('click', () => onPause());
     $('helpbtn').addEventListener('click', () => { const h = $('help'); h.hidden = !h.hidden; $('helpbtn').setAttribute('aria-pressed', !h.hidden); });
     $('speed').addEventListener('click', () => onSpeed());
-    $('mute').addEventListener('click', () => { const m = onMute(); $('mute').textContent = m ? '🔇' : '🔊'; $('mute').setAttribute('aria-pressed', m); });
+    $('mute').addEventListener('click', () => { const m = onMute(); $('mute').innerHTML = SYS_ICON(m ? 'mute' : 'sound'); $('mute').setAttribute('aria-pressed', m); });
+    $('mute').innerHTML = SYS_ICON('sound'); $('pause').innerHTML = SYS_ICON('pause'); $('helpbtn').innerHTML = SYS_ICON('help');
     // minimap
     const mm = $('minimap');
     this.mmBase = null;
@@ -98,10 +109,10 @@ export class HUD {
       el.classList.toggle('sel', this.input.sel.has(q)); el.classList.toggle('rout', q.state === 'rout'); el.classList.toggle('dead', q.dead);
       el.querySelector('.n').textContent = q.alive.length;
       const m = el.querySelector('.mor > i'); m.style.width = Math.max(0, Math.min(100, q.morale)) + '%';
-      m.style.background = q.morale > 60 ? '#7cc46b' : q.morale > 35 ? '#e0b44a' : '#e0645a';
+      m.style.background = q.morale > 60 ? '#8fb04a' : q.morale > 35 ? '#d9a23b' : '#c0452f';
       el.querySelector('.st').textContent = STATE(q);
       const st = el.querySelector('.sta > i'); st.style.width = Math.max(0, Math.min(100, q.stam)) + '%';
-      st.style.background = q.stam > 30 ? '#6fb2e8' : '#e0b44a';
+      st.style.background = q.stam > 30 ? '#6a9cc4' : '#d9a23b';
       el.querySelector('.am').textContent = q.T.ranged ? (q.meleeMode ? '⚔ рукопашная' : `${Math.round(q.ammo / Math.max(1, q.alive.length))} стрел`) : '';
     }
     const cry = document.getElementById('ord-cry');
@@ -140,7 +151,7 @@ export class HUD {
       $('n0').textContent = a.alive; $('n1').textContent = b.alive;
       $('clock').textContent = fmt(this.sim.time);
       $('fps').textContent = `${fps.toFixed(0)} FPS · ${this.sim.soldiers.length} бойцов`;
-      $('pause').textContent = paused ? '▶' : '❚❚'; $('pause').setAttribute('aria-pressed', paused);
+      if (this.shownPause !== paused) { this.shownPause = paused; $('pause').innerHTML = SYS_ICON(paused ? 'play' : 'pause'); $('pause').setAttribute('aria-pressed', paused); }
       $('speed').textContent = '×' + speed;
       if (this.city) { this.cityPanel.update(); for (const m of this.city.eco.msgs.splice(0)) this.say(m.text, m.cls); }
       else this.updateCards();
@@ -160,6 +171,11 @@ export class HUD {
         img.data[k] = Math.sqrt(c.r) * 255; img.data[k + 1] = Math.sqrt(c.g) * 255; img.data[k + 2] = Math.sqrt(c.b) * 255; img.data[k + 3] = 255;
       }
       bg.putImageData(img, 0, 0);
+      // an old map: warm paper tone and darkened edges
+      bg.globalCompositeOperation = 'multiply'; bg.fillStyle = '#e8d3a2'; bg.fillRect(0, 0, S, S);
+      const v = bg.createRadialGradient(S / 2, S / 2, S * 0.3, S / 2, S / 2, S * 0.75);
+      v.addColorStop(0, 'rgba(255,255,255,1)'); v.addColorStop(1, 'rgba(120,80,40,1)');
+      bg.fillStyle = v; bg.fillRect(0, 0, S, S); bg.globalCompositeOperation = 'source-over';
     }
     g.drawImage(this.mmBase, 0, 0);
     const m = (x, z) => [((x + HALF) / SIZE) * S, ((z + HALF) / SIZE) * S];
