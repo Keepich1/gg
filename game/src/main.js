@@ -1,6 +1,7 @@
 // Entry point: scene, lights, world, and the game loop.
 import * as THREE from '../vendor/three.module.min.js';
-import { buildTerrain, buildWater, buildOuterGround, buildSky, buildTrees } from './terrain.js';
+import { buildTerrain, buildWater, buildOuterGround, buildSky, buildTrees, TIME } from './terrain.js';
+import { GrassField, buildScatter } from './scenery.js';
 import { Sim } from './sim.js';
 import { AI } from './ai.js';
 import { Renderer3D } from './render.js';
@@ -29,6 +30,8 @@ sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048); sun.shadow.bias = -0.
 scene.add(hemi, sun, sun.target);
 scene.add(buildSky(), buildOuterGround(), buildTerrain(), buildWater());
 let trees = buildTrees(); scene.add(trees);
+let scatter = buildScatter(); scene.add(scatter);
+const grass = new GrassField(scene);
 
 const rts = new RTSCamera(camera, canvas);
 let sim = null, ai = null, r3d = null, city = null, paused = false, speed = 1;
@@ -49,11 +52,12 @@ function cleanup() {
   input.stopPlacing?.();
 }
 
-function startCity({ peace = 480 } = {}) {
+function startCity({ peace = 480, side = 'kokand' } = {}) {
   cleanup();
   // fresh forest: trees felled in the previous game grow back
   scene.remove(trees); trees = buildTrees(); scene.add(trees);
-  sim = new Sim({ factions: ['kokand', 'kipchak'], seed: (Date.now() % 100000) + 1, mode: 'city' });
+  scene.remove(scatter); scatter = buildScatter(); scene.add(scatter);
+  sim = new Sim({ factions: [side, side === 'kokand' ? 'kipchak' : 'kokand'], seed: (Date.now() % 100000) + 1, mode: 'city' });
   const eco = new Economy(sim);
   eco.setupPlayer();
   const raid = new RaidAI(sim, eco, { peace });
@@ -61,6 +65,8 @@ function startCity({ peace = 480 } = {}) {
   r3d = new Renderer3D(scene, sim);
   const cityR = new CityRenderer(scene, sim, eco, trees.userData.trees);
   cityR.onSmoke = (x, y, z, k) => r3d.puff(x, y, z, k);
+  cityR.onPlace = (b) => scatter.userData.clearRect(b.x, b.z, b.w, b.d);
+  grass.blocked = (x, z) => !!eco.buildingAt(x, z, 0.6);
   sim.events.length = 0;
   city = { eco, raid, cityR };
   input.attach(sim, r3d, 0, city);
@@ -68,7 +74,7 @@ function startCity({ peace = 480 } = {}) {
   rts.yaw = 0; rts.dist = 150; rts.centerOn(BASES.player[0], BASES.player[1] + 12);
   paused = false; speed = 1;
   audio.init();
-  setTimeout(() => audio.horn(rts.tx, rts.tz, 'kokand', 0.8), 400);
+  setTimeout(() => audio.horn(rts.tx, rts.tz, side, 0.8), 400);
 }
 
 function start(side) {
@@ -77,6 +83,7 @@ function start(side) {
   sim = new Sim({ factions: [side, other], seed: (Date.now() % 100000) + 1 });
   ai = new AI(sim, 1);
   r3d = new Renderer3D(scene, sim);
+  grass.blocked = null;
   input.attach(sim, r3d, 0, null);
   hud.attach(sim, null);
   const mine = sim.squads.filter((q) => q.team === 0);
@@ -111,6 +118,8 @@ function frame() {
   acc += dt; frames++;
   if (acc > 0.5) { fps = frames / acc; acc = 0; frames = 0; }
   rts.update(dt);
+  TIME.value += dt;
+  grass.update(rts.tx, rts.tz, rts.dist, city ? sim.buildings.length * 1000 + sim.buildings.filter((b) => !b.dead).length : 0);
   let simDt = 0;
   if (sim && !paused && !sim.result) {
     simDt = dt * speed;
@@ -124,7 +133,8 @@ function frame() {
     audio.listener(rts.tx, rts.tz, rts.dist, rts.yaw);
     audio.onEvents(sim.events, sim, dt);
     bedT -= dt; if (bedT <= 0) { bedT = 0.2; audio.updateBeds(sim); }
-    r3d.onEvents(sim.events); hud.onEvents(sim.events); sim.events.length = 0;
+    if (city) city.eco.onEvents(sim.events);
+    r3d.onEvents(sim.events); hud.onEvents(sim.events); if (city) city.cityR.onEvents(sim.events); sim.events.length = 0;
     r3d.update(simDt, camera, renderer.domElement.height);
     if (city) city.cityR.update(simDt);
     hud.update(dt, fps, paused, speed);

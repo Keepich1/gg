@@ -9,7 +9,7 @@
 export const TYPES = {
   // ---------------- Коканд ----------------
   dehqon: {
-    key: 'dehqon', name: 'Деҳқон', sub: 'крестьянин: добывает ресурсы и строит', model: 'worker', icon: 'worker', worker: true,
+    key: 'dehqon', name: 'Деҳқон', sub: 'крестьянин: добывает ресурсы и строит', model: 'worker', icon: 'worker', worker: true, civil: true,
     hp: 60, speed: 3.8, armor: 0, count: 1, ranks: 1, spacing: 1.2, drain: 0,
     melee: { dmg: 4, rate: 1.6, reach: 1.5 }, cost: { food: 50 }, time: 7,
   },
@@ -58,41 +58,55 @@ export const TYPES = {
   },
 
   // ---------------- Кыпчаки ----------------
+  malchy: {
+    key: 'malchy', name: 'Малчы', sub: 'кочевник: рубит лес, моет золото, ставит юрты', model: 'worker', icon: 'worker', worker: true, civil: true,
+    hp: 65, speed: 4, armor: 0, count: 1, ranks: 1, spacing: 1.2, drain: 0,
+    melee: { dmg: 5, rate: 1.5, reach: 1.5 }, cost: { food: 45 }, time: 6,
+  },
+  juzbashy: {
+    key: 'juzbashy', name: 'Жүз башы', sub: 'конный сотник: собирает бойцов одного рода в отряд до 100', model: 'officer', icon: 'officer', officer: true, mounted: true,
+    hp: 170, speed: 9, armor: 4, count: 1, ranks: 1, spacing: 2.4, drain: 1.6,
+    melee: { dmg: 16, rate: 1.2, reach: 2.4, charge: 2 }, cost: { food: 60, gold: 50 }, time: 12,
+  },
+  arba: {
+    key: 'arba', name: 'Арба', sub: 'свёрнутая юрта в пути: поставьте её на новом месте', model: 'wagon', icon: 'wagon', civil: true, wagon: true,
+    hp: 260, speed: 3.4, armor: 3, count: 1, ranks: 1, spacing: 3, drain: 0,
+  },
   atchan: {
     key: 'atchan', name: 'Атчан жаачылар', sub: 'конные лучники, без стрел рубятся саблей', model: 'horsearcher', icon: 'bow', mounted: true, skirmish: true,
     hp: 115, speed: 9.5, armor: 1, count: 36, ranks: 2, spacing: 2.6, drain: 2.2,
     melee: { dmg: 12, rate: 1.3, reach: 2.3, charge: 1.6 },
-    ranged: { kind: 'arrow', range: 100, reload: 3.0, dmg: 14, acc: [0.5, 0.09], ammo: 15 },
+    ranged: { kind: 'arrow', range: 100, reload: 3.0, dmg: 14, acc: [0.5, 0.09], ammo: 15 }, cost: { food: 40, gold: 20 }, time: 9,
   },
   joo: {
     key: 'joo', name: 'Жөө жоокерлер', sub: 'пехота с мечом и щитом', model: 'sword', icon: 'shield', shield: true,
     hp: 115, speed: 3.8, armor: 3, count: 50, ranks: 3, spacing: 1.25, drain: 1.2,
-    melee: { dmg: 15, rate: 1.25, reach: 1.8 },
+    melee: { dmg: 15, rate: 1.25, reach: 1.8 }, cost: { food: 30, wood: 15 }, time: 7,
   },
   mergen: {
     key: 'mergen', name: 'Мергендер', sub: 'меткие пешие стрелки', model: 'archer', icon: 'bow', loose: true,
     hp: 85, speed: 4, armor: 0, count: 30, ranks: 2, spacing: 1.4, drain: 1.0,
     melee: { dmg: 6, rate: 1.5, reach: 1.6 },
-    ranged: { kind: 'arrow', range: 135, reload: 4.5, dmg: 20, acc: [0.65, 0.16], ammo: 20 },
+    ranged: { kind: 'arrow', range: 135, reload: 4.5, dmg: 20, acc: [0.65, 0.16], ammo: 20 }, cost: { food: 30, wood: 30 }, time: 9,
   },
   saiyskar: {
     key: 'saiyskar', name: 'Сайыскерлер', sub: 'тяжёлые копейщики', model: 'lancer', icon: 'lance', mounted: true,
     hp: 200, speed: 9, armor: 4, count: 32, ranks: 2, spacing: 2.5, drain: 3.0,
-    melee: { dmg: 19, rate: 1.3, reach: 2.8, charge: 3 },
+    melee: { dmg: 19, rate: 1.3, reach: 2.8, charge: 3 }, cost: { food: 60, gold: 50 }, time: 12,
   },
   chabuul: {
     key: 'chabuul', name: 'Чабуулчулар', sub: 'лёгкая конница для налётов', model: 'cav', icon: 'cav', mounted: true,
     hp: 110, speed: 11, armor: 1, count: 30, ranks: 2, spacing: 2.4, drain: 1.6,
-    melee: { dmg: 13, rate: 1.1, reach: 2.3, charge: 1.8 },
+    melee: { dmg: 13, rate: 1.1, reach: 2.3, charge: 1.8 }, cost: { food: 40, wood: 10 }, time: 8,
   },
   batyr: {
     key: 'batyr', name: 'Батырлар', sub: 'сверхтяжёлая гвардия, с ними колбашчы', model: 'guard', icon: 'crown', mounted: true,
     commander: { name: 'Колбашчы', model: 'commander' },
     hp: 290, speed: 7.8, armor: 7, count: 12, ranks: 2, spacing: 2.7, drain: 3.4,
-    melee: { dmg: 25, rate: 1.25, reach: 2.8, charge: 3.2 },
+    melee: { dmg: 25, rate: 1.25, reach: 2.8, charge: 3.2 }, cost: { food: 100, gold: 100 }, time: 18,
   },
 };
-for (const T of Object.values(TYPES)) T.walk = T.worker ? 1 : T.mounted ? 0.5 : 0.62;
+for (const T of Object.values(TYPES)) T.walk = T.worker || T.wagon ? 1 : T.mounted ? 0.5 : 0.62;
 
 // Army layout: [type, lateral offset (m, + = right), depth offset (m, + = forward)]
 export const FACTIONS = {
@@ -116,7 +130,7 @@ export const FORMATIONS = {
   square: { name: 'Каре', speed: 0.35 },
   loose: { name: 'Рассыпной', speed: 1.05 },
 };
-export const formationsFor = (T) => (T.artillery || T.worker || T.officer ? ['line'] : T.mounted ? ['line', 'loose', 'column'] : T.ranged?.kind === 'arrow' ? ['loose', 'line', 'column'] : ['line', 'column', 'square']);
+export const formationsFor = (T) => (T.artillery || T.civil || T.officer ? ['line'] : T.mounted ? ['line', 'loose', 'column'] : T.ranged?.kind === 'arrow' ? ['loose', 'line', 'column'] : ['line', 'column', 'square']);
 export const defaultFormation = (T) => (T.skirmish || T.loose ? 'loose' : 'line');
 
 const spacingOf = (sq) => sq.T.spacing * (sq.formation === 'loose' ? 1.8 : 1);

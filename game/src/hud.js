@@ -55,6 +55,7 @@ export class HUD {
     this.sim = sim; this.city = city; this.feed = []; $('feed').innerHTML = ''; this.mmBase = null;
     document.body.classList.toggle('city', !!city);
     $('subtitle').textContent = city ? 'город · демо' : 'поле боя · прототип';
+    document.body.classList.toggle('kip', !!city && sim.teams[0].key === 'kipchak');
     if (city) this.cityPanel.attach(sim, city); else this.cityPanel.city = null;
     const [a, b] = sim.teams;
     $('f0').textContent = a.faction.name; $('f1').textContent = b.faction.name;
@@ -201,19 +202,19 @@ export class HUD {
       this.peace = +b.dataset.peace;
       $('peace').querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
     });
-    $('go-city').addEventListener('click', () => { $('menu').hidden = true; this.onStart('city', { peace: this.peace }); });
+    for (const side of ['kokand', 'kipchak']) $('go-city-' + side).addEventListener('click', () => { this.side = side; $('menu').hidden = true; this.onStart('city', { peace: this.peace, side }); });
   }
 
   showEnd(r) {
     const me = this.input.team, win = r.winner === me, [a, b] = this.sim.teams;
     if (r.city) {
       $('end-body').innerHTML = `<h2 class="${win ? 'win' : 'lose'}">${win ? 'Победа' : 'Поражение'}</h2>
-        <p>${win ? 'Хан ордосу разрушена, кыпчаки откочевали.' : 'Урда пала.'} Игра длилась ${fmt(r.time)}.</p>
+        <p>${win ? `Вражеская ставка «${this.city.raid.main.T.name}» разрушена.` : 'Ваша ставка пала.'} Игра длилась ${fmt(r.time)}.</p>
         <table><thead><tr><th></th><th>Потери</th><th>Убито врагов</th></tr></thead><tbody>
         <tr><td>${a.faction.name}</td><td>${a.losses}</td><td>${a.kills}</td></tr><tr><td>${b.faction.name}</td><td>${b.losses}</td><td>${b.kills}</td></tr></tbody></table>`;
       $('endscreen').hidden = false;
       $('again').textContent = 'Ещё раз'; $('swap').textContent = 'В меню';
-      $('again').onclick = () => { $('endscreen').hidden = true; this.onStart('city', { peace: this.peace }); };
+      $('again').onclick = () => { $('endscreen').hidden = true; this.onStart('city', { peace: this.peace, side: this.side || 'kokand' }); };
       $('swap').onclick = () => { $('endscreen').hidden = true; $('menu').hidden = false; };
       return;
     }

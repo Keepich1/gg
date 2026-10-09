@@ -1,8 +1,8 @@
 // City economy: stockpiles, resource nodes, worker jobs, construction, training queues, population and food upkeep.
 // Pure logic on top of Sim, so it runs headless too.
-import { BUILDINGS, RES_NAMES } from './buildings.js';
+import { BUILDINGS, RES_NAMES, MAIN } from './buildings.js';
 import { TYPES } from './units.js';
-import { groundY, slopeAt, WATER_Y, HALF, BASES, DEPOSITS, treeSpots } from './world.js';
+import { groundY, slopeAt, WATER_Y, HALF, SIZE, BASES, DEPOSITS, treeSpots, mountainW, fbm } from './world.js';
 import { edgePoint } from './sim.js';
 
 export const CARRY = 10;
@@ -10,12 +10,24 @@ const RATE = { wood: 0.9, stone: 0.65, gold: 0.5, food: 0.7 }; // per worker per
 const TREE_WOOD = 100, DEPOSIT = { stone: 4000, gold: 3000 };
 const UPKEEP = 0.012; // food per soldier per second (~0.7 per minute)
 const TG = 25;        // tree grid cell, m
+const PG = 40, PN = SIZE / PG;            // pasture grid
+const HERD = 0.9;                         // food per second from one koroo on fresh grass
+const GRAZE = 0.0016, REGROW = 0.00035;   // pasture wear per koroo, and regrowth, per second
+const START = { kokand: { food: 500, wood: 400, stone: 250, gold: 200 }, kipchak: { food: 350, wood: 380, stone: 0, gold: 150 } };
 export const JOB_TEXT = { wood: 'рубит лес', stone: 'добывает камень', gold: 'добывает золото', food: 'работает в поле' };
 
 export class Economy {
   constructor(sim) {
     this.sim = sim;
-    this.stock = [{ food: 500, wood: 400, stone: 250, gold: 200 }, { food: 0, wood: 0, stone: 0, gold: 0 }];
+    this.stock = sim.teams.map((t) => ({ ...START[t.key] }));
+    this.faction = sim.teams.map((t) => t.key);
+    // pasture: fresh steppe grass, poorer on dry ground and in the mountains
+    this.grass = new Float32Array(PN * PN); this.grassMax = new Float32Array(PN * PN);
+    for (let j = 0; j < PN; j++) for (let i = 0; i < PN; i++) {
+      const x = -HALF + (i + 0.5) * PG, z = -HALF + (j + 0.5) * PG;
+      const v = groundY(x, z) < WATER_Y ? 0 : Math.max(0.15, 0.65 + fbm(x * 0.004, z * 0.004, 3) * 0.5 - mountainW(x, z) * 0.8);
+      this.grass[j * PN + i] = this.grassMax[j * PN + i] = Math.min(1, v);
+    }
     this.popCap = [0, 0];
     this.jobs = new Map();
     this.msgs = [];
@@ -27,7 +39,14 @@ export class Economy {
     this.upkeepAcc = 0; this.famineT = -99; this.popT = 0;
   }
 
-  say(text, cls = '', team = 0) { if (team === 0) this.msgs.push({ text, cls }); }
+  say(text, cls = '', team = 0) {
+    if (team !== 0) return;
+    // the same warning from several workers at once is shown once
+    const last = (this.saidAt ||= new Map()).get(text);
+    if (last != null && this.sim.time - last < 6) return;
+    this.saidAt.set(text, this.sim.time);
+    this.msgs.push({ text, cls });
+  }
 
   // ---------- resource lookup ----------
   tkey(x, z) { return Math.floor((x + HALF) / TG) + ',' + Math.floor((z + HALF) / TG); }
@@ -58,8 +77,14 @@ export class Economy {
   missing(team, cost) { return Object.entries(cost).filter(([k, v]) => this.stock[team][k] < v).map(([k, v]) => `${RES_NAMES[k].toLowerCase()} ${Math.ceil(v - this.stock[team][k])}`).join(', '); }
 
   // ---------- buildings ----------
-  footprintOk(key, x, z) {
+  footprintOk(key, x, z, ignore = null) {
     const T = BUILDINGS[key], hw = T.w / 2, hd = T.d / 2;
+    if (T.mine && !this.nodes.some((n) => n.amount > 0 && Math.hypot(n.x - x, n.z - z) < n.r + 26)) return { ok: false, why: 'Кен ставится рядом с золотом или камнем' };
+    for (const s of this.sim.soldiers) {
+      if (!s.alive || !s.unpackAt || s === ignore) continue;
+      const P = BUILDINGS[s.cargo.key];
+      if (Math.abs(x - s.unpackAt[0]) < hw + P.w / 2 + 2 && Math.abs(z - s.unpackAt[1]) < hd + P.d / 2 + 2) return { ok: false, why: 'Здесь уже будет другая юрта' };
+    }
     if (Math.abs(x) > HALF - 30 - hw || Math.abs(z) > HALF - 30 - hd) return { ok: false, why: 'Слишком близко к краю карты' };
     let lo = Infinity, hi = -Infinity;
     for (const u of [-1, 0, 1]) for (const v of [-1, 0, 1]) {
@@ -76,7 +101,8 @@ export class Economy {
     }
     for (const n of this.nodes) if (Math.abs(x - n.x) < hw + n.r + 2 && Math.abs(z - n.z) < hd + n.r + 2) return { ok: false, why: 'Мешает месторождение' };
     let tree = false;
-    this.treesNear(x, z, Math.max(hw, hd) + 2, (t) => { if (Math.abs(t.x - x) < hw + 0.8 && Math.abs(t.z - z) < hd + 0.8) tree = true; });
+    // keep clear of the crowns, not just the trunks
+    this.treesNear(x, z, Math.max(hw, hd) + 4, (t) => { if (Math.abs(t.x - x) < hw + 2.2 && Math.abs(t.z - z) < hd + 2.2) tree = true; });
     if (tree) return { ok: false, why: 'Мешают деревья' };
     return { ok: true };
   }
@@ -239,7 +265,8 @@ export class Economy {
     }
     if (job.phase === 'work') {
       s.faceTo = field ? [field.x, field.z] : [node.x, node.z];
-      const take = RATE[job.res] * dt;
+      if (!job.kenT || this.sim.time > job.kenT) { job.kenT = this.sim.time + 2; job.ken = !field && this.sim.buildings.some((b) => b.T.mine && b.done && !b.dead && b.team === s.team && Math.hypot(b.x - node.x, b.z - node.z) < 34); }
+      const take = RATE[job.res] * dt * (job.ken ? 1.5 : 1);
       if (!field) { node.amount -= take; if (node.amount <= 0 && node.tree) this.felled.push(node); }
       job.carry += take;
       if (this.sim.time - s.strikeT > (field ? 1.3 : 0.9)) { s.strikeT = this.sim.time; this.sim.events.push({ k: 'work', res: job.res, x: s.x, z: s.z }); }
@@ -248,7 +275,7 @@ export class Economy {
     }
     if (job.phase === 'carry') {
       const b = this.dropFor(s.team, job.res, s.x, s.z);
-      if (!b) { if (!job.warned) { this.say(`Некуда нести ${RES_NAMES[job.res].toLowerCase()}: постройте ${job.res === 'food' ? 'тегирмон' : 'омбор'}`, 'bad', s.team); job.warned = true; } return; }
+      if (!b) { if (!job.warned) { this.say(`Некуда нести ${RES_NAMES[job.res].toLowerCase()}: ${this.faction[s.team] === 'kipchak' ? 'разверните ордо или поставьте кен' : `постройте ${job.res === 'food' ? 'тегирмон' : 'омбор'}`}`, 'bad', s.team); job.warned = true; } return; }
       const [ex, ez] = edgePoint(b, s.x, s.z), dx = s.x - b.x, dz = s.z - b.z, l = Math.hypot(dx, dz) || 1;
       const px = ex + (dx / l) * 1.2, pz = ez + (dz / l) * 1.2;
       if (!this.near(s, px, pz, 2.4)) { this.go(s, job, px, pz); return; }
@@ -267,6 +294,8 @@ export class Economy {
       this.work(s, job, dt);
     }
     for (const b of sim.buildings) if (b.dead && !b.gone) this.destroyed(b);
+    this.herds(dt);
+    for (const s of sim.soldiers) if (s.alive && s.unpackAt) this.tryUnpack(s);
     this.upkeep(dt);
     this.popT -= dt; if (this.popT <= 0) { this.popT = 0.5; this.recalcPop(); }
   }
@@ -276,9 +305,107 @@ export class Economy {
     for (const s of b.users) this.jobs.delete(s);
     b.users.clear();
     this.recalcPop();
+    if (b.packed) return;
     if (b.team === 0) this.say(`Разрушено: ${b.T.name}`, 'bad'); else this.say(`Враг потерял: ${b.T.name}`, 'good');
-    if (b.key === 'urda' && !this.sim.result) this.end(1);
-    if (b.key === 'xanordo' && !this.sim.result) this.end(0);
+    if (b.T.main && !this.sim.result) this.end(1 - b.team);
+  }
+
+  // ---------- nomads: herds, loot, packing the camp ----------
+  cell(x, z) { return Math.max(0, Math.min(PN - 1, Math.floor((z + HALF) / PG))) * PN + Math.max(0, Math.min(PN - 1, Math.floor((x + HALF) / PG))); }
+  pastureAt(x, z) { return this.grass[this.cell(x, z)]; }
+  herds(dt) {
+    const g = this.grass, used = new Set();
+    for (const b of this.sim.buildings) {
+      if (!b.T.herd || !b.done || b.dead) continue;
+      const c = this.cell(b.x, b.z);
+      b.grass = g[c];
+      const rate = HERD * Math.min(1, g[c] * 1.3);
+      this.stock[b.team].food += rate * dt; b.foodRate = rate * 60;
+      g[c] = Math.max(0, g[c] - GRAZE * dt); used.add(c);
+      if (g[c] < 0.3 && !b.warned && b.team === 0) { b.warned = true; this.say('Пастбище вытоптано: отару пора перегнать (свернуть короо и поставить на свежей траве)', 'bad'); }
+    }
+    if ((this.regrowT = (this.regrowT || 0) - dt) <= 0) {
+      this.regrowT = 2;
+      for (let i = 0; i < g.length; i++) if (!used.has(i) && g[i] < this.grassMax[i]) g[i] = Math.min(this.grassMax[i], g[i] + REGROW * 2);
+    }
+  }
+  // Raiders live on plunder: kills and razed buildings pay the Kipchaks.
+  onEvents(events) {
+    for (const e of events) {
+      if (e.k === 'death') {
+        if (e.s.cargo?.main && !this.sim.result) { this.say(`Арба с ханской ставкой потеряна!`, 'bad', e.s.team); this.end(1 - e.s.team); }
+        else if (e.s.cargo && e.s.team === 0) this.say(`Потеряна арба: ${BUILDINGS[e.s.cargo.key].name}`, 'bad');
+        if (e.by != null && this.faction[e.by] === 'kipchak') {
+          const loot = e.s.T.civil ? { gold: 10, food: 10 } : { gold: 4, food: 6 };
+          this.pay(e.by, loot, -1); this.lootSum = (this.lootSum || 0) + loot.gold;
+        }
+      } else if (e.k === 'bdead' && e.by != null && this.faction[e.by] === 'kipchak' && !e.b.packed) {
+        const c = e.b.T.cost || {}, loot = { gold: Math.round((c.gold || 0) * 0.4 + (c.stone || 0) * 0.3 + (e.b.T.main ? 400 : 30)), wood: Math.round((c.wood || 0) * 0.3) };
+        this.pay(e.by, loot, -1);
+        this.say(`Олжо: +${loot.gold} золота, +${loot.wood} дерева с «${e.b.T.name}»`, 'good', e.by);
+      }
+    }
+  }
+  pack(b) {
+    if (!b.T.pack || !b.done || b.dead) return null;
+    for (const k of b.queue) this.pay(b.team, TYPES[k].cost, -1);
+    b.queue = []; b.dead = true; b.packed = true;
+    for (const s of b.users) this.jobs.delete(s);
+    b.users.clear();
+    const sq = this.sim.spawnUnit(b.team, 'arba', b.x, b.z + b.d / 2 + 2.5, 0);
+    sq.alive[0].cargo = { key: b.key, hp: b.hp / b.maxHp, main: !!b.T.main };
+    this.recalcPop();
+    this.sim.events.push({ k: 'packed', b });
+    return sq;
+  }
+  packCamp(team) {
+    const main = this.sim.buildings.find((b) => b.team === team && b.T.main && !b.dead);
+    if (!main) return [];
+    const list = this.sim.buildings.filter((b) => b.team === team && b.T.pack && b.done && !b.dead && Math.hypot(b.x - main.x, b.z - main.z) < 170);
+    const out = list.map((b) => this.pack(b)).filter(Boolean);
+    this.say(`Көч! Лагерь свёрнут: ${out.length} арб. Ведите их к новому месту и разверните`, 'good', team);
+    return out;
+  }
+  unpack(sq, x, z, quiet = false) {
+    const s = sq.alive[0];
+    if (!s?.cargo) return false;
+    const f = this.footprintOk(s.cargo.key, x, z, s);
+    if (!f.ok) { if (!quiet) this.say(f.why, 'bad', sq.team); return false; }
+    s.unpackAt = [x, z];
+    this.sim.order(sq, { kind: 'move', x, z, face: Math.PI }); // the site is still empty: drive onto it
+    return true;
+  }
+  // Lay a whole caravan out around a point: the khan's ordo in the middle, the rest in rings.
+  unpackGroup(sqs, x, z) {
+    const wagons = sqs.filter((q) => q.alive[0]?.cargo).sort((a, b) => (b.alive[0].cargo.main ? 1 : 0) - (a.alive[0].cargo.main ? 1 : 0));
+    let placed = 0;
+    for (const q of wagons) {
+      const key = q.alive[0].cargo.key;
+      let done = false;
+      for (let r = 0; r <= 110 && !done; r += 9) for (let a = 0; a < Math.PI * 2 && !done; a += r ? 9 / r : 7) {
+        const px = Math.round(x + Math.cos(a) * r), pz = Math.round(z + Math.sin(a) * r);
+        if (this.footprintOk(key, px, pz, q.alive[0]).ok) { done = this.unpack(q, px, pz, true); }
+      }
+      if (done) placed++;
+    }
+    if (placed < wagons.length) this.say(`Не нашлось места для ${wagons.length - placed} юрт`, 'bad', wagons[0]?.team ?? 0);
+    return placed;
+  }
+  tryUnpack(s) {
+    const [x, z] = s.unpackAt, key = s.cargo.key, T = BUILDINGS[key];
+    // close to the site from any side: neighbours' yurts may block one of them
+    if (Math.hypot(s.x - x, s.z - z) > Math.max(T.w, T.d) / 2 + 5) {
+      if (s.sq.order.kind === 'idle') this.sim.order(s.sq, { kind: 'move', x, z, face: Math.PI });
+      return;
+    }
+    s.unpackAt = null;
+    const f = this.footprintOk(key, x, z, s);
+    if (!f.ok) { this.say(`${T.name}: ${f.why.toLowerCase()}`, 'bad', s.team); return; }
+    const b = this.addBuilding(s.team, key, x, z, true);
+    b.hp = b.maxHp * s.cargo.hp;
+    this.sim.remove(s);
+    this.recalcPop();
+    this.sim.events.push({ k: 'unpacked', b });
   }
   end(winner) {
     this.sim.result = { winner, loser: 1 - winner, time: this.sim.time, city: true };
@@ -301,14 +428,15 @@ export class Economy {
 
   // ---------- start of a city game ----------
   setupPlayer() {
-    const [x, z] = BASES.player;
-    this.addBuilding(0, 'urda', x, z, true);
+    const [x, z] = BASES.player, fac = this.faction[0], kip = fac === 'kipchak';
+    this.addBuilding(0, MAIN[fac], x, z, true);
+    if (kip) { this.addBuilding(0, 'boz', x - 16, z + 4, true); this.addBuilding(0, 'boz', x + 16, z + 4, true); this.addBuilding(0, 'koroo', x + 2, z + 26, true); }
     for (let i = 0; i < 8; i++) {
-      const a = (i / 8) * Math.PI - Math.PI, sq = this.sim.spawnUnit(0, 'dehqon', x + Math.cos(a) * 16, z - 14 + Math.sin(a) * 5, Math.PI);
+      const a = (i / 8) * Math.PI - Math.PI, sq = this.sim.spawnUnit(0, kip ? 'malchy' : 'dehqon', x + Math.cos(a) * 16, z - 14 + Math.sin(a) * 5, Math.PI);
       if (i < 4) { const t = this.nearestNode('wood', sq.cx, sq.cz, 260); if (t) this.assignGather(sq, t); }
     }
-    this.sim.spawnUnit(0, 'yuzboshi', x + 14, z - 18, Math.PI);
-    for (let i = 0; i < 6; i++) this.sim.spawnUnit(0, 'sarbaz', x - 12 + (i % 3) * 2, z - 22 - Math.floor(i / 3) * 2, Math.PI);
+    this.sim.spawnUnit(0, kip ? 'juzbashy' : 'yuzboshi', x + 14, z - 18, Math.PI);
+    for (let i = 0; i < 6; i++) this.sim.spawnUnit(0, kip ? 'atchan' : 'sarbaz', x - 12 + (i % 3) * 2.5, z - 22 - Math.floor(i / 3) * 2.5, Math.PI);
     this.recalcPop();
   }
 }

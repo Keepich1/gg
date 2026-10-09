@@ -85,7 +85,8 @@
   .card.dead { opacity: .35; }
   /* city mode */
   .resbar { display: none; align-items: center; gap: 14px; font-variant-numeric: tabular-nums; }
-  body.city .resbar { display: flex; } body.city .strength { display: none; }
+  body.city .resbar { display: flex; } body.city .strength { display: none; } body.kip .rs.stone { display: none; }
+  .gos { display: flex; gap: 8px; flex-wrap: wrap; margin-top: auto; } .gos .go { margin-top: 0; } .go.kipgo { background: #b0392f; }
   .rs { display: flex; align-items: center; gap: 5px; font-size: 17px; }
   .rs svg { width: 18px; height: 18px; color: #e9d9ae; } .rs.gold svg { color: var(--gold); }
   .rs small { font-size: 12px; color: var(--bad); margin-left: 2px; }
@@ -169,7 +170,7 @@
     <div class="resbar" id="resbar">
       <span class="rs" title="Еда"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21V8M12 12c-3 0-5-2-5-5 3 0 5 2 5 5zm0 0c3 0 5-2 5-5-3 0-5 2-5 5zm0 5c-3 0-5-2-5-5 3 0 5 2 5 5zm0 0c3 0 5-2 5-5-3 0-5 2-5 5z" fill="currentColor"/></svg><b id="r-food">0</b><small id="r-upkeep"></small></span>
       <span class="rs" title="Дерево"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="12" width="17" height="6" rx="3" fill="currentColor"/><rect x="5" y="5" width="16" height="6" rx="3" fill="currentColor" opacity=".7"/></svg><b id="r-wood">0</b></span>
-      <span class="rs" title="Камень"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 19l3-8 6-3 4 4-1 7zM12 19l3-9 5-1 2 6-2 4z" fill="currentColor"/></svg><b id="r-stone">0</b></span>
+      <span class="rs stone" title="Камень"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 19l3-8 6-3 4 4-1 7zM12 19l3-9 5-1 2 6-2 4z" fill="currentColor"/></svg><b id="r-stone">0</b></span>
       <span class="rs gold" title="Золото"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="2.4"/><rect x="9.6" y="9.6" width="4.8" height="4.8" fill="currentColor"/></svg><b id="r-gold">0</b></span>
       <span class="rs" title="Население / предел (дома поднимают предел)"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="7" r="3" fill="currentColor"/><path d="M3 20c0-5 3-8 6-8s6 3 6 8z" fill="currentColor"/></svg><b id="r-pop">0/0</b></span>
       <span class="raid" id="r-raid"></span>
@@ -178,7 +179,7 @@
     <div class="sys"><span id="fps"></span><span id="clock">0:00</span><button type="button" id="speed" title="Скорость (+ / −)">×1</button><button type="button" id="pause" title="Пауза (P)">❚❚</button><button type="button" id="mute" title="Звук (M)" aria-pressed="false">🔊</button><button type="button" id="helpbtn" title="Управление" aria-pressed="false">?</button></div>
   </header>
   <div id="feed"></div>
-<div class="help" id="help" hidden><b>ЛКМ</b> выбрать, рамкой — несколько<br><b>ПКМ</b> идти · по врагу — атака<br><b>ПКМ + тянуть</b> — выстроить линию<br><b>Двойной ПКМ</b> — бегом<br><b>F</b> строй · <b>H</b> стоп · <b>G</b> качып атуу<br><b>R</b> стрельба / рукопашная · <b>V</b> клич<br><b>WASD</b>, колесо, <b>Q/E</b> — камера<br><b>Ctrl+1…9</b> группа · <b>P</b> пауза · <b>M</b> звук<br><b>Город:</b> ПКМ деҳқонами по лесу, камню, золоту, полю — добывать<br><b>U</b> юзбоши собирает / распускает отряд · <b>.</b> свободный деҳқон</div>
+<div class="help" id="help" hidden><b>ЛКМ</b> выбрать, рамкой — несколько<br><b>ПКМ</b> идти · по врагу — атака<br><b>ПКМ + тянуть</b> — выстроить линию<br><b>Двойной ПКМ</b> — бегом<br><b>F</b> строй · <b>H</b> стоп · <b>G</b> качып атуу<br><b>R</b> стрельба / рукопашная · <b>V</b> клич<br><b>WASD</b>, колесо, <b>Q/E</b> — камера<br><b>Ctrl+1…9</b> группа · <b>P</b> пауза · <b>M</b> звук<br><b>Город:</b> ПКМ деҳқонами по лесу, камню, золоту, полю — добывать<br><b>U</b> офицер собирает / распускает отряд · <b>.</b> свободный работник<br><b>K</b> свернуть юрту / поставить арбу · <b>Shift+K</b> свернуть весь лагерь</div>
   <footer class="bottom">
     <div class="mini"><canvas id="minimap" width="180" height="180" title="Клик — камера, правый клик — отправить выбранных"></canvas></div>
     <div class="army"><div class="orders" id="orders"></div><div class="cards" id="cards"></div><div id="citypanel"></div></div>
@@ -192,9 +193,11 @@
       <div class="modes">
         <section class="mode citymode">
           <h2>Город <span>демо</span></h2>
-          <p>Отстройте Коканд: деҳқоны рубят лес, добывают камень и золото, растят пшеницу. Дома поднимают население, в казарме, отхоне и тўпхоне нанимаются войска по одному, юзбоши собирает их в отряды до 100 человек. С севера идут набеги кыпчаков: разрушьте их Хан ордосу.</p>
+          <p><b>Коканд:</b> деҳқоны рубят лес, добывают камень и золото, растят пшеницу; дома, казарма, отхона, тўпхона. Войска нанимаются по одному, юзбоши собирает их в отряды до 100 человек.</p>
+          <p><b>Кыпчаки:</b> лагерь из юрт. Отары сами дают еду, пока есть трава; за убитых и сожжённое идёт олжо. Кончилось золото или пастбище — свернули лагерь в арбы и откочевали.</p>
+          <p>Победа — разрушить вражескую ставку.</p>
           <div class="peace" id="peace"><span>Мирное время:</span><button type="button" data-peace="300" aria-pressed="false">5 мин</button><button type="button" data-peace="480" aria-pressed="true">8 мин</button><button type="button" data-peace="720" aria-pressed="false">12 мин</button></div>
-          <button type="button" class="go" id="go-city">Играть за Коканд</button>
+          <div class="gos"><button type="button" class="go" id="go-city-kokand">Играть за Коканд</button><button type="button" class="go kipgo" id="go-city-kipchak">Играть за кыпчаков</button></div>
         </section>
         <section class="mode battlemode">
           <h2>Сражение</h2>

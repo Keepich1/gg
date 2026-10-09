@@ -19,6 +19,18 @@ const VS_BUILDING = { musket: 0.3, arrow: 0.12, ball: 3, melee: 0.35 };
 
 // Closest point of an axis-aligned building rectangle to (x, z).
 export const edgePoint = (b, x, z) => [Math.max(b.x - b.w / 2, Math.min(b.x + b.w / 2, x)), Math.max(b.z - b.d / 2, Math.min(b.z + b.d / 2, z))];
+// Where along the segment (ox,oz)+t(dx,dz), t in [0,1], it enters a box of half-size hw×hd at the origin; null if it misses.
+const segBox = (ox, oz, dx, dz, hw, hd) => {
+  let t0 = 0, t1 = 1;
+  for (const [p, d, h] of [[ox, dx, hw], [oz, dz, hd]]) {
+    if (Math.abs(d) < 1e-9) { if (Math.abs(p) >= h) return null; continue; }
+    let a = (-h - p) / d, b = (h - p) / d;
+    if (a > b) [a, b] = [b, a];
+    t0 = Math.max(t0, a); t1 = Math.min(t1, b);
+    if (t0 > t1) return null;
+  }
+  return t0;
+};
 
 export class Sim {
   constructor({ factions, seed = 1, armyScale = 1, mode = 'battle' }) {
@@ -90,7 +102,7 @@ export class Sim {
   formSquad(offSq, cands) {
     const off = offSq?.alive[0];
     if (!off || !off.T.officer || !offSq.solo) return null;
-    const pool = cands.filter((q) => q.solo && !q.dead && q.team === off.team && !q.T.officer && !q.T.worker && !q.T.artillery && q.state !== 'rout');
+    const pool = cands.filter((q) => q.solo && !q.dead && q.team === off.team && !q.T.officer && !q.T.civil && !q.T.artillery && q.state !== 'rout');
     const byKey = {};
     for (const q of pool) (byKey[q.key] ||= []).push(q);
     const key = Object.keys(byKey).sort((a, b) => byKey[b].length - byKey[a].length)[0];
@@ -150,7 +162,7 @@ export class Sim {
   nearestEnemy(s, r, skipWorkers = false) {
     let best = null, bd = r * r;
     this.forNear(s.x, s.z, r, (o) => {
-      if (o.team === s.team || !o.alive || (skipWorkers && o.T.worker)) return;
+      if (o.team === s.team || !o.alive || (skipWorkers && o.T.civil)) return;
       const d = (o.x - s.x) ** 2 + (o.z - s.z) ** 2;
       if (d < bd) { bd = d; best = o; }
     });
@@ -209,7 +221,7 @@ export class Sim {
     // nearest enemy squad, and the nearest thing a skirmisher should back away from
     let near = null, nd = Infinity, threat = null, td = Infinity;
     if (sq.solo) {
-      const e = this.nearestEnemy(al[0], 170, T.worker);
+      const e = this.nearestEnemy(al[0], 170, T.civil);
       if (e && e.sq.state !== 'rout') { near = e.sq; nd = Math.hypot(e.x - sq.mx, e.z - sq.mz); if (!this.shoots(near) && near.T.melee) { threat = near; td = nd; } }
     } else for (const o of this.squads) {
       if (o.dead || o.team === sq.team || o.state === 'rout') continue;
@@ -271,7 +283,7 @@ export class Sim {
         else { gx = sq.cx; gz = sq.cz; }
       }
     }
-    if (sq.state !== 'rout' && sq.order.kind !== 'attack' && !T.worker) {
+    if (sq.state !== 'rout' && sq.order.kind !== 'attack' && !T.civil) {
       if (shoots && near && nd <= T.ranged.range && nd >= (T.ranged.minRange || 0)) sq.fireTarget = near;
       else if (!shoots && T.melee && near && sq.order.kind === 'idle' && nd < (T.mounted ? 70 : 40)) sq.order = { kind: 'attack', target: near, auto: true };
     }
@@ -296,6 +308,7 @@ export class Sim {
     }
     sq.running = running;
 
+    sq.aimX = gx; sq.aimZ = gz; // solo units steer around buildings towards this
     // keep the centre with the fight once soldiers are engaged
     if (sq.solo || sq.lastEngaged > al.length * 0.25) {
       const k = sq.solo ? 1 : Math.min(1, dt * 2);
@@ -315,6 +328,30 @@ export class Sim {
     sq.face = turn(sq.face, faceGoal, (T.mounted ? 2 : 1.1) * dt);
   }
 
+  detour(x, z, gx, gz, rad) {
+    if (Math.hypot(gx - x, gz - z) < 1) return null;
+    let hit = null, ht = 1;
+    for (const b of this.buildings) {
+      if (b.walk || b.dead) continue;
+      const hw = b.w / 2 + rad * 0.6 + 0.3, hd = b.d / 2 + rad * 0.6 + 0.3;
+      if (Math.abs(gx - b.x) < hw && Math.abs(gz - b.z) < hd) continue; // heading to this very building
+      const t = segBox(x - b.x, z - b.z, gx - x, gz - z, hw, hd);
+      if (t != null && t < ht) { ht = t; hit = b; }
+    }
+    if (!hit) return null;
+    // the inner box is a little smaller than the solid footprint, so a unit pressed against a wall still sees the corners on its side
+    const m = rad * 0.6 + 1.2, hw = hit.w / 2 + m, hd = hit.d / 2 + m, iw = hit.w / 2 + rad * 0.6 - 0.35, id = hit.d / 2 + rad * 0.6 - 0.35;
+    let best = null, cost = Infinity;
+    for (const [sx, sz] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+      const cx = hit.x + sx * hw, cz = hit.z + sz * hd;
+      if (Math.hypot(cx - x, cz - z) < 1.2) continue; // already here: go on to the next corner
+      if (segBox(x - hit.x, z - hit.z, cx - x, cz - z, iw, id) != null) continue; // corner hidden behind the building
+      const c = Math.hypot(cx - x, cz - z) + Math.hypot(gx - cx, gz - cz);
+      if (c < cost) { cost = c; best = [cx, cz]; }
+    }
+    return best;
+  }
+
   updateSoldier(s, dt) {
     const sq = s.sq, T = s.T, n = sq.alive.length, shoots = this.shoots(sq) && !!T.ranged;
     const [lx, lz] = slotLocal(sq, s.slot, n), [fx, fz] = fwdOf(sq.face), [rx, rz] = rightOf(sq.face);
@@ -324,7 +361,7 @@ export class Sim {
 
     // melee: enemy soldiers first, then a building we were told to attack
     let foe = null, stand = false;
-    if (sq.state !== 'rout' && T.melee && !(T.worker && sq.order.kind !== 'attack')) {
+    if (sq.state !== 'rout' && T.melee && !(T.civil && sq.order.kind !== 'attack')) {
       const charging = (sq.order.kind === 'attack' || sq.order.kind === 'attackB') && !shoots;
       const r = charging ? (T.mounted ? 14 : 9) : sq.kiting ? 0 : T.mounted ? 6 : 4.5;
       if (r > 0) foe = s.target && s.target.alive && (s.target.x - s.x) ** 2 + (s.target.z - s.z) ** 2 < (r * 1.6) ** 2 ? s.target : this.nearestEnemy(s, r);
@@ -359,6 +396,13 @@ export class Sim {
       }
     } else if (T.ranged && s.reload > 0) s.reload -= dt * 0.5;
 
+    // no pathfinding yet: walk around a building in the way by its nearest free corner
+    const rad = T.mounted ? 2.1 : T.artillery ? 2.4 : 0.95;
+    if (this.mode === 'city' && !stand && !foe) {
+      const far = sq.solo && sq.aimX != null, w = this.detour(s.x, s.z, far ? sq.aimX : gx, far ? sq.aimZ : gz, rad);
+      if (w) { gx = w[0]; gz = w[1]; }
+    }
+
     // movement
     let dvx = 0, dvz = 0;
     if (!stand) {
@@ -371,7 +415,6 @@ export class Sim {
         dvx = (dx / d) * v; dvz = (dz / d) * v;
       }
     }
-    const rad = T.mounted ? 2.1 : T.artillery ? 2.4 : 0.95;
     let px = 0, pz = 0;
     this.forNear(s.x, s.z, rad, (o) => {
       if (o === s || !o.alive) return;
@@ -510,7 +553,16 @@ export class Sim {
     }
     tm.alive--; tm.losses++;
     if (by) { this.teams[by.team].kills++; by.sq.kills++; }
-    this.events.push({ k: 'death', s });
+    this.events.push({ k: 'death', s, by: by?.team });
+  }
+  // Take a unit off the field without it counting as a loss (a wagon turning back into a yurt).
+  remove(s) {
+    if (!s.alive) return;
+    s.alive = false; s.removed = true; s.deadT = this.time;
+    const sq = s.sq, idx = sq.alive.indexOf(s), tm = this.teams[s.team];
+    if (idx >= 0) { sq.alive.splice(idx, 1); for (let i = idx; i < sq.alive.length; i++) sq.alive[i].slot = i; }
+    tm.alive--; tm.initial--;
+    this.events.push({ k: 'removed', s });
   }
 
   checkResult(dt) {

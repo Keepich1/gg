@@ -25,6 +25,9 @@ export class CityPanel {
     else if (a === 'formsq') inp.formSquad();
     else if (a === 'disband') inp.disband();
     else if (a === 'idle') inp.selectIdleWorker();
+    else if (a === 'pack') inp.packSelected(false);
+    else if (a === 'packcamp') inp.packSelected(true);
+    else if (a === 'unpack') inp.startUnpacking();
     else return;
     e.stopPropagation();
   }
@@ -34,26 +37,30 @@ export class CityPanel {
     if (!this.city) return;
     const inp = this.input, b = inp.selB && !inp.selB.dead ? inp.selB : null, sel = inp.selectedLive();
     const panel = $('citypanel'), orders = $('orders');
+    this.sig = this.selSig();
     if (b) {
       const mine = b.team === inp.team;
       panel.innerHTML = `<div class="bp">
-        <div class="bp-head">${icon(BUILDINGS[b.key] && ['xanordo', 'bozuy'].includes(b.key) ? 'crown' : b.key)}<div><b>${b.T.name}</b><span>${b.T.sub}</span></div></div>
+        <div class="bp-head">${icon(b.key)}<div><b>${b.T.name}</b><span>${b.T.sub}</span></div></div>
         <div class="bp-stats"><i class="hpbar"><i id="b-hp"></i></i><span id="b-hpn"></span><span id="b-prog"></span></div>
         ${mine && b.T.trains ? `<div class="train">${b.T.trains.map((k) => `<button type="button" data-act="train" data-k="${k}" id="tr-${k}" title="${TYPES[k].sub}">
             ${icon(TYPES[k].icon)}<b>${TYPES[k].name}</b><span class="cost">${costHtml(TYPES[k].cost)}</span></button>`).join('')}</div>
           <div class="queue" id="b-queue"></div>` : ''}
       </div>`;
-      orders.innerHTML = `<span class="hint">${mine ? (b.T.trains ? 'ПКМ по земле, ресурсу или полю — сборный пункт' : b.T.drop ? `Принимает: ${b.T.drop.map((r) => RES_NAMES[r].toLowerCase()).join(', ')}` : '') : 'Вражеское здание: выберите войска и ПКМ по нему, чтобы атаковать'}</span>${this.idleBtn()}`;
+      const packBtns = mine && b.T.pack && b.done ? `<button type="button" data-act="pack" id="ord-pack" title="Юрта складывается в арбу, её можно увезти и поставить в другом месте">Свернуть в арбу <kbd>K</kbd></button>
+        ${b.T.main ? `<button type="button" data-act="packcamp" id="ord-packcamp" class="cry" title="Все юрты в радиусе 170 м складываются в арбы">Көч: свернуть весь лагерь <kbd>Shift+K</kbd></button>` : ''}` : '';
+      orders.innerHTML = `<span class="hint">${mine ? (b.T.trains ? 'ПКМ по земле, ресурсу или полю — сборный пункт' : b.T.drop ? `Принимает: ${b.T.drop.map((r) => RES_NAMES[r].toLowerCase()).join(', ')}` : b.T.herd ? 'Отара пасётся сама. Вытопчет траву — сверните короо и перегоните' : '') : 'Вражеское здание: выберите войска и ПКМ по нему, чтобы атаковать'}</span>${packBtns}${this.idleBtn()}`;
     } else if (sel.length) {
-      const workers = sel.filter((q) => q.T.worker), army = sel.filter((q) => !q.T.worker);
+      const workers = sel.filter((q) => q.T.worker), wagons = sel.filter((q) => q.T.wagon), army = sel.filter((q) => !q.T.worker && !q.T.wagon);
       const solos = {}, forms = [];
       for (const q of army) { if (q.solo) (solos[q.key] ||= []).push(q); else forms.push(q); }
       const chips = [];
-      if (workers.length) chips.push(`<span class="chip">${icon('worker')}Деҳқон ×${workers.length}<em id="jobsum"></em></span>`);
+      if (workers.length) chips.push(`<span class="chip">${icon('worker')}${workers[0].T.name} ×${workers.length}<em id="jobsum"></em></span>`);
+      if (wagons.length) chips.push(`<span class="chip">${icon('wagon')}Арбы ×${wagons.length}<em>: ${wagons.map((q) => BUILDINGS[q.alive[0].cargo.key].name).join(', ')}</em></span>`);
       for (const [k, list] of Object.entries(solos)) chips.push(`<span class="chip">${icon(TYPES[k].icon)}${TYPES[k].name} ×${list.length}</span>`);
       for (const q of forms) chips.push(`<span class="chip form" id="fchip-${q.id}">${icon(q.T.icon)}Отряд: ${q.T.name} <b class="fn"></b><i class="mor"><i></i></i></span>`);
       panel.innerHTML = `<div class="up"><div class="chips">${chips.join('')}</div>
-        ${workers.length ? `<div class="buildmenu">${BUILD_MENU.map((k) => `<button type="button" data-act="build" data-k="${k}" id="bm-${k}" title="${BUILDINGS[k].sub}">${icon(k)}<b>${BUILDINGS[k].name}</b><span class="cost">${costHtml(BUILDINGS[k].cost)}</span></button>`).join('')}</div>` : ''}
+        ${workers.length ? `<div class="buildmenu">${BUILD_MENU[this.sim.teams[0].key].map((k) => `<button type="button" data-act="build" data-k="${k}" id="bm-${k}" title="${BUILDINGS[k].sub}">${icon(k)}<b>${BUILDINGS[k].name}</b><span class="cost">${costHtml(BUILDINGS[k].cost)}</span></button>`).join('')}</div>` : ''}
       </div>`;
       const off = sel.find((q) => q.T.officer && q.solo), formable = army.filter((q) => q.solo && !q.T.officer && !q.T.artillery);
       const byKey = {}; for (const q of formable) byKey[q.key] = (byKey[q.key] || 0) + 1;
@@ -66,18 +73,26 @@ export class CityPanel {
         ${rs.length ? `<button type="button" data-act="melee" id="ord-melee">${rs.every((q) => q.meleeMode) ? 'Рукопашная' : 'Стрельба'} <kbd>R</kbd></button>` : ''}
         ${off ? `<button type="button" data-act="formsq" id="ord-formsq" class="cry" ${canForm ? '' : 'disabled'} title="Юзбоши соберёт до ${MAX_SQUAD} бойцов одного рода из выбранных">${canForm ? `Собрать отряд: ${TYPES[best[0]].name} ×${Math.min(best[1], MAX_SQUAD - 1)}` : 'Собрать отряд: выберите юзбоши и бойцов одного рода'} <kbd>U</kbd></button>` : ''}
         ${forms.length ? `<button type="button" data-act="disband" id="ord-disband">Распустить отряд <kbd>U</kbd></button>` : ''}
+        ${wagons.length ? `<button type="button" data-act="unpack" id="ord-unpack" class="cry" title="Укажите место на карте: ${wagons.length > 1 ? 'лагерь встанет кольцом вокруг этой точки' : 'юрта встанет здесь'}">${wagons.length > 1 ? `Развернуть лагерь (${wagons.length})` : 'Поставить юрту'} <kbd>K</kbd></button>` : ''}
         ${this.idleBtn()}`;
     } else {
-      panel.innerHTML = `<div class="up"><p class="hint big">Выберите деҳқонов, чтобы строить. Кликните здание, чтобы нанимать войска.<br>ПКМ деҳқонами по лесу, камню, золоту или полю — добывать.</p></div>`;
+      const kip = this.sim.teams[0].key === 'kipchak';
+      panel.innerHTML = `<div class="up"><p class="hint big">${kip
+        ? 'Выберите малчы, чтобы ставить юрты. ПКМ малчы по лесу или золоту — добывать. Отары в короо сами дают еду.<br>Кончилось золото или трава — сверните лагерь (Хан ордосу → Көч) и поставьте его на новом месте.'
+        : 'Выберите деҳқонов, чтобы строить. Кликните здание, чтобы нанимать войска.<br>ПКМ деҳқонами по лесу, камню, золоту или полю — добывать.'}</p></div>`;
       orders.innerHTML = `<span class="hint">Войска нанимаются по одному. Юзбоши собирает их в отряд до ${MAX_SQUAD} человек.</span>${this.idleBtn()}`;
     }
     this.update();
   }
-  idleBtn() { return `<button type="button" data-act="idle" id="ord-idle" class="idle">Свободные деҳқоны: <b id="idle-n">0</b> <kbd>.</kbd></button>`; }
+  idleBtn() { return `<button type="button" data-act="idle" id="ord-idle" class="idle">Свободные ${this.sim.teams[0].key === 'kipchak' ? 'малчы' : 'деҳқоны'}: <b id="idle-n">0</b> <kbd>.</kbd></button>`; }
+
+  // what the panel was drawn for: redraw when a selected unit dies, a wagon turns into a yurt, a building falls
+  selSig() { const b = this.input.selB; return (b && !b.dead ? 'b' + b.id : '') + '|' + this.input.selectedLive().map((q) => q.id).join(','); }
 
   // ---------- live numbers ----------
   update() {
     if (!this.city) return;
+    if (this.selSig() !== this.sig) { this.render(); return; }
     const { eco, raid } = this.city, sim = this.sim, st = eco.stock[0];
     for (const r of RES) $('r-' + r).textContent = Math.floor(st[r]);
     $('r-pop').textContent = `${eco.popUsed(0)}/${eco.popCap[0]}`;
@@ -92,7 +107,8 @@ export class CityPanel {
     if (b && !b.dead) {
       const hp = $('b-hp'); if (hp) { hp.style.width = (100 * b.hp / b.maxHp) + '%'; $('b-hpn').textContent = `${Math.ceil(b.hp)} / ${b.maxHp}`; }
       const pr = $('b-prog');
-      if (pr) pr.textContent = !b.done ? `Строится: ${Math.floor(b.progress * 100)}%` : b.T.field ? `Работают: ${b.users.size} из ${b.T.slots}` : b.blocked ? 'Нужно больше домов' : '';
+      if (pr) pr.textContent = !b.done ? `Строится: ${Math.floor(b.progress * 100)}%` : b.T.field ? `Работают: ${b.users.size} из ${b.T.slots}`
+        : b.T.herd ? `Трава: ${Math.round((b.grass ?? 1) * 100)}% · еда +${Math.round(b.foodRate || 0)}/мин` : b.T.mine ? 'Добыча рядом +50%' : b.blocked ? 'Нужно больше юрт или домов' : '';
       const q = $('b-queue');
       if (q) q.innerHTML = b.queue.map((k, i) => `<button type="button" class="qchip" data-act="cancel" data-i="${i}" title="Отменить: ${TYPES[k].name}">${icon(TYPES[k].icon)}${i === 0 ? `<i style="width:${(100 * b.qT / TYPES[k].time).toFixed(0)}%"></i>` : ''}</button>`).join('') || '<span class="hint">Очередь пуста</span>';
     }

@@ -22,6 +22,14 @@ export const ICONS = {
   kazarma: '<path d="M3 20V9h3V6h3v3h2V6h2v3h2V6h3v3h3v11z" fill="currentColor"/>',
   otxona: '<path d="M4 13c2-3 6-3 9-2l4-5 3 1-1 4-2 1v3c0 2-1 3-2 3v3h-2v-3H9v3H7v-3c-2 0-3-2-3-5z" fill="currentColor"/>',
   topxona: '<circle cx="8" cy="17" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 17L21 9" stroke="currentColor" stroke-width="4" stroke-linecap="round"/><path d="M17 3v4" stroke="currentColor" stroke-width="2"/>',
-  urda: '<path d="M3 20v-8h18v8zM6 12c0-4 3-7 6-7s6 3 6 7" fill="currentColor"/><path d="M12 2v3" stroke="currentColor" stroke-width="2"/>'
+  urda: '<path d="M3 20v-8h18v8zM6 12c0-4 3-7 6-7s6 3 6 7" fill="currentColor"/><path d="M12 2v3" stroke="currentColor" stroke-width="2"/>',
+  wagon: '<circle cx="7" cy="17" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3 12h14l2-5H8z" fill="currentColor"/><path d="M17 12l5 4" stroke="currentColor" stroke-width="2"/>',
+  ordo: '<path d="M2 20v-6h20v6zM2 14c1-6 5-9 10-9s9 3 10 9z" fill="currentColor"/><path d="M19 3v8" stroke="currentColor" stroke-width="1.6"/>',
+  boz: '<path d="M4 20v-6h16v6zM4 14c1-5 4-8 8-8s7 3 8 8z" fill="currentColor"/><rect x="10" y="15" width="4" height="5" fill="#141b33"/>',
+  koroo: '<ellipse cx="12" cy="13" rx="9" ry="5" fill="none" stroke="currentColor" stroke-width="2"/><ellipse cx="10" cy="13" rx="3" ry="2" fill="currentColor"/><ellipse cx="15" cy="12" rx="2.5" ry="1.8" fill="currentColor"/>',
+  ken: '<path d="M4 20l9-9M9 6c4-3 9-2 11 2-4-1-7 0-9 2z" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linejoin="round"/><circle cx="17" cy="18" r="3" fill="currentColor"/>',
+  jooker: '<path d="M4 20v-6h16v6zM4 14c1-5 4-8 8-8s7 3 8 8z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 18l8-8M14 10h2v2" stroke="currentColor" stroke-width="2"/>',
+  jylky: '<path d="M4 13c2-3 6-3 9-2l4-5 3 1-1 4-2 1v3c0 2-1 3-2 3v3h-2v-3H9v3H7v-3c-2 0-3-2-3-5z" fill="currentColor"/>',
+  kurultai: '<path d="M3 18l2-10 5 5 2-7 2 7 5-5 2 10z" fill="currentColor"/><path d="M4 21h16" stroke="currentColor" stroke-width="2"/>'
 };
 export const icon = (k) => `<svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[k]}</svg>`;

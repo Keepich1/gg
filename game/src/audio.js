@@ -171,7 +171,7 @@ export class BattleAudio {
       else if (e.k === 'shot') this.shotAcc.push(e);
       else if (e.k === 'strike') strikes++;
       else if (e.k === 'work' && (this.workBudget || 0) >= 1) { this.work(e.x, e.z, e.res); this.workBudget--; }
-      else if (e.k === 'raid') this.horn(this.lx, this.lz - 260, 'kipchak', 2.2);
+      else if (e.k === 'raid') this.horn(this.lx, this.lz - 260, e.fac || 'kipchak', 2.2);
     }
     this.workBudget = Math.min(3, (this.workBudget || 0) + dt * 5);
     // arrows: one whoosh per ~0.3 s for the volley nearest to the camera

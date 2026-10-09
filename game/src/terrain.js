@@ -2,6 +2,9 @@
 import * as THREE from '../vendor/three.module.min.js';
 import { SIZE, HALF, RES, STEP, WATER_Y, grid, groundY, slopeAt, fbm, noise, riverX, mountainW, treeSpots } from './world.js';
 
+// Seconds since start, shared by every animated shader (wind, water).
+export const TIME = { value: 0 };
+
 const C = (hex) => new THREE.Color(hex);
 const PAL = {
   grassA: C('#7d8c43'), grassB: C('#9b9a55'), dry: C('#b4a36a'), lush: C('#61853a'), sand: C('#c4b183'),
@@ -25,18 +28,73 @@ export const groundColor = (x, z, h = groundY(x, z), slope = slopeAt(x, z), out 
   return out;
 };
 
+// Tileable detail texture. R: grass grain and clumps, G: soil with pebbles and cracks, B: broad blotches.
+const thash = (x, y, s) => {
+  let h = (x * 374761393 + y * 668265263 + s * 982451653) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+};
+const pnoise = (u, v, P, s) => {
+  const xi = Math.floor(u), yi = Math.floor(v), xf = u - xi, yf = v - yi, w = (i) => ((i % P) + P) % P;
+  const a = thash(w(xi), w(yi), s), b = thash(w(xi + 1), w(yi), s), c = thash(w(xi), w(yi + 1), s), d = thash(w(xi + 1), w(yi + 1), s);
+  const sx = xf * xf * (3 - 2 * xf), sy = yf * yf * (3 - 2 * yf);
+  return a + (b - a) * sx + (c - a) * sy + (a - b - c + d) * sx * sy;
+};
+// distance to the nearest and second-nearest jittered point on a wrapping grid
+const cells = (u, v, P, s) => {
+  const xi = Math.floor(u), yi = Math.floor(v);
+  let f1 = 9, f2 = 9;
+  for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) {
+    const cx = xi + i, cy = yi + j, wx = ((cx % P) + P) % P, wy = ((cy % P) + P) % P;
+    const d = Math.hypot(cx + thash(wx, wy, s) - u, cy + thash(wx, wy, s + 1) - v);
+    if (d < f1) { f2 = f1; f1 = d; } else if (d < f2) f2 = d;
+  }
+  return [f1, f2];
+};
 const detailTexture = () => {
-  const c = document.createElement('canvas'); c.width = c.height = 128;
-  const g = c.getContext('2d'), img = g.createImageData(128, 128);
-  for (let i = 0; i < 128 * 128; i++) {
-    const x = i % 128, y = (i / 128) | 0;
-    const v = 205 + (noise(x * 0.35, y * 0.35) * 0.6 + Math.random() * 0.4) * 50;
-    img.data.set([v, v, v * 0.97, 255], i * 4);
+  const N = 256, c = document.createElement('canvas'); c.width = c.height = N;
+  const g = c.getContext('2d'), img = g.createImageData(N, N);
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const u = x / N, v = y / N;
+    const clump = pnoise(u * 16, v * 16, 16, 1) * 0.5 + pnoise(u * 32, v * 32, 32, 2) * 0.3 + pnoise(u * 64, v * 64, 64, 3) * 0.2;
+    const grain = thash(x, y, 4);
+    const grass = Math.min(1, Math.max(0, (clump - 0.5) * 1.6 + 0.5 + (grain - 0.5) * 0.45));
+    const [f1, f2] = cells(u * 12, v * 12, 12, 5), [p1] = cells(u * 40, v * 40, 40, 7);
+    const soil = Math.min(1, Math.max(0, 0.5 + (pnoise(u * 24, v * 24, 24, 8) - 0.5) * 0.5 - (f2 - f1 < 0.05 ? 0.2 : 0) + (p1 < 0.18 ? 0.25 : 0) + (grain - 0.5) * 0.25));
+    const blot = pnoise(u * 4, v * 4, 4, 9) * 0.65 + pnoise(u * 8, v * 8, 8, 10) * 0.35;
+    img.data.set([grass * 255, soil * 255, blot * 255, 255], (y * N + x) * 4);
   }
   g.putImageData(img, 0, 0);
   const t = new THREE.CanvasTexture(c);
-  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(260, 260); t.anisotropy = 8; t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8;
   return t;
+};
+
+// Vertex colours give the biome; the detail texture, sampled at three scales in world space, gives the grain.
+const terrainMaterial = () => {
+  const m = new THREE.MeshLambertMaterial({ vertexColors: true }), tex = detailTexture();
+  m.onBeforeCompile = (sh) => {
+    sh.uniforms.tDetail = { value: tex };
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vWP; varying float vUp;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvWP = (modelMatrix * vec4(transformed, 1.0)).xyz; vUp = normal.y;');
+    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nuniform sampler2D tDetail; varying vec3 vWP; varying float vUp;')
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        {
+          vec2 p = vWP.xz;
+          vec4 a = texture2D(tDetail, p * 0.11);
+          vec4 b = texture2D(tDetail, p * 0.027 + 0.31);
+          vec4 c = texture2D(tDetail, p * 0.0042 + 0.7);
+          float grassy = clamp((vColor.g - max(vColor.r, vColor.b)) * 9.0 + 0.15, 0.0, 1.0) * smoothstep(0.78, 0.93, vUp);
+          float lum = dot(vColor.rgb, vec3(0.3, 0.59, 0.11));
+          float d = mix(a.g * 0.6 + b.g * 0.4, a.r * 0.6 + b.r * 0.4, grassy);
+          float amp = 0.75 * (1.0 - smoothstep(0.42, 0.8, lum));
+          diffuseColor.rgb *= 1.0 + (d - 0.5) * amp;
+          float m = (c.b - 0.5) * 1.4;
+          diffuseColor.rgb *= vec3(1.0 + m * 0.2, 1.0 + m * 0.07, 1.0 - m * 0.22);
+          diffuseColor.rgb *= mix(0.6, 1.0, smoothstep(${(WATER_Y - 0.3).toFixed(2)}, ${(WATER_Y + 0.9).toFixed(2)}, vWP.y));
+        }`);
+  };
+  return m;
 };
 
 export function buildTerrain() {
@@ -61,14 +119,42 @@ export function buildTerrain() {
   geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
   geo.setIndex(new THREE.BufferAttribute(idx, 1));
   geo.computeVertexNormals();
-  const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true, map: detailTexture() }));
+  const mesh = new THREE.Mesh(geo, terrainMaterial());
   mesh.receiveShadow = true;
   return mesh;
 }
 
+// Water tinted by depth (read from the heightfield), with foam on the shore and moving ripples.
 export function buildWater() {
-  const geo = new THREE.PlaneGeometry(SIZE * 4, SIZE * 4).rotateX(-Math.PI / 2);
-  const m = new THREE.Mesh(geo, new THREE.MeshPhongMaterial({ color: '#4b8592', specular: '#d8eef2', shininess: 90, transparent: true, opacity: 0.85 }));
+  const W = RES + 1, data = new Uint8Array(W * W * 4);
+  for (let k = 0; k < W * W; k++) data[k * 4] = Math.max(0, Math.min(1, (WATER_Y - grid[k]) / 3)) * 255;
+  const depth = new THREE.DataTexture(data, W, W);
+  depth.magFilter = depth.minFilter = THREE.LinearFilter; depth.needsUpdate = true;
+  const mat = new THREE.MeshPhongMaterial({ color: '#4b8592', specular: '#cfe6ea', shininess: 70, transparent: true, opacity: 1 });
+  mat.onBeforeCompile = (sh) => {
+    sh.uniforms.tDepth = { value: depth }; sh.uniforms.uTime = TIME;
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vWP;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvWP = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nuniform sampler2D tDepth; uniform float uTime; varying vec3 vWP;')
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        vec2 duv = ((vWP.xz + ${HALF.toFixed(1)}) / ${STEP.toFixed(1)} + 0.5) / ${W.toFixed(1)};
+        float dep = texture2D(tDepth, duv).r;
+        float flow = sin(vWP.x * 0.9 + vWP.z * 0.15 + uTime * 0.8) * sin(vWP.z * 0.35 - uTime * 1.6);
+        diffuseColor.rgb = mix(vec3(0.16, 0.34, 0.30), vec3(0.025, 0.10, 0.13), smoothstep(0.0, 0.75, dep));
+        float foam = (1.0 - smoothstep(0.0, 0.05 + 0.03 * flow, dep)) * 0.75 + smoothstep(0.55, 0.95, flow) * smoothstep(0.1, 0.35, dep) * 0.12;
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.85, 0.88, 0.86), foam);
+        diffuseColor.a = mix(0.45, 0.93, smoothstep(0.0, 0.3, dep));`)
+      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+        {
+          vec2 q = vWP.xz, gr = vec2(0.0);
+          gr += vec2(0.18, 1.0) * cos(dot(q, vec2(0.18, 1.0)) * 0.55 - uTime * 2.3) * 0.5;
+          gr += vec2(-0.6, 0.8) * cos(dot(q, vec2(-0.6, 0.8)) * 1.3 - uTime * 3.1) * 0.25;
+          gr += vec2(0.9, 0.4) * cos(dot(q, vec2(0.9, 0.4)) * 2.7 - uTime * 4.3) * 0.12;
+          vec3 nW = normalize(vec3(-gr.x * 0.35, 1.0, -gr.y * 0.35));
+          normal = normalize((viewMatrix * vec4(nW, 0.0)).xyz);
+        }`);
+  };
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(SIZE * 4, SIZE * 4).rotateX(-Math.PI / 2), mat);
   m.position.y = WATER_Y;
   m.receiveShadow = true;
   return m;

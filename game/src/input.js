@@ -163,7 +163,7 @@ export class Input {
     cx /= sqs.length; cz /= sqs.length;
     const face = Math.hypot(x - cx, z - cz) > 4 ? Math.atan2(x - cx, z - cz) : sqs[0].face;
     const rx = -Math.cos(face), rz = Math.sin(face), fx = Math.sin(face), fz = Math.cos(face);
-    const cols = Math.ceil(Math.sqrt(sqs.length * 1.6)), sp = sqs.some((q) => q.T.mounted || q.T.artillery) ? 3.2 : 1.8;
+    const cols = Math.ceil(Math.sqrt(sqs.length * 1.6)), sp = sqs.some((q) => q.T.wagon) ? 7 : sqs.some((q) => q.T.mounted || q.T.artillery) ? 3.2 : 1.8;
     const sorted = sqs.slice().sort((p, q) => (p.mx * rx + p.mz * rz) - (q.mx * rx + q.mz * rz));
     sorted.forEach((q, i) => {
       const c = i % cols, r = Math.floor(i / cols), lx = (c - (cols - 1) / 2) * sp, lz = -r * sp;
@@ -204,6 +204,7 @@ export class Input {
   }
   selectBuilding(b, silent = false) {
     this.selB = b && !b.dead ? b : null;
+    if (this.selB) this.sel.clear();
     if (this.city) this.city.cityR.selected = this.selB;
     if (!silent) this.onChange();
   }
@@ -217,9 +218,29 @@ export class Input {
     this.placing = key; this.city.cityR.setGhost(key);
     this.city.eco.say(`Где построить ${BUILDINGS[key].name.toLowerCase()}? ЛКМ — поставить, ПКМ — отмена`, '');
   }
-  stopPlacing() { this.placing = null; this.city?.cityR.setGhost(null); }
+  stopPlacing() { this.placing = null; this.unpacking = null; this.city?.cityR.setGhost(null); }
+  // Nomads: fold the selected yurt (or the whole camp) into wagons, and set wagons down again.
+  packSelected(all) {
+    const { eco } = this.city || {}, b = this.selB;
+    if (!eco || !b || b.team !== this.team || !b.T.pack) return;
+    const wagons = all && b.T.main ? eco.packCamp(this.team) : [eco.pack(b)].filter(Boolean);
+    if (wagons.length) this.select(wagons);
+  }
+  startUnpacking() {
+    const wagons = this.selectedLive().filter((q) => q.T.wagon && q.alive[0]?.cargo);
+    if (!wagons.length || !this.city) return;
+    const main = wagons.find((q) => q.alive[0].cargo.main) || wagons[0];
+    this.unpacking = wagons; this.placing = main.alive[0].cargo.key; this.city.cityR.setGhost(this.placing);
+    this.city.eco.say(wagons.length > 1 ? 'Где разбить лагерь? ЛКМ — место, юрты встанут кольцом вокруг' : 'Где поставить юрту? ЛКМ — место, ПКМ — отмена', '');
+  }
   placeAt(x, y, keep) {
     const g = this.rts.groundAt(x, y); if (!g) return;
+    if (this.unpacking) {
+      const { eco } = this.city, w = this.unpacking.filter((q) => !q.dead), px = Math.round(g.x), pz = Math.round(g.z);
+      const ok = w.length > 1 ? eco.unpackGroup(w, px, pz) > 0 : w.length === 1 && eco.unpack(w[0], px, pz);
+      if (ok) { this.r3d.marker(px, pz, '#ffd66b', 2.5); this.stopPlacing(); }
+      return;
+    }
     const builders = this.selectedLive().filter((q) => q.T.worker);
     const b = this.city.eco.place(this.team, this.placing, Math.round(g.x), Math.round(g.z), builders);
     if (b) { this.r3d.marker(b.x, b.z, '#ffd66b', 2); if (!keep) this.stopPlacing(); }
@@ -272,6 +293,7 @@ export class Input {
     const sqs = this.selectedLive();
     if (e.code === 'KeyH') { for (const q of sqs) { if (this.city && q.T.worker) this.city.eco.stopJob(q); this.sim.order(q, { kind: 'hold', face: q.face }); } this.onChange(); }
     else if (e.code === 'KeyU' && this.city) { if (sqs.some((q) => q.T.officer && q.solo)) this.formSquad(); else this.disband(); }
+    else if (e.code === 'KeyK' && this.city) { if (this.selB) this.packSelected(e.shiftKey); else this.startUnpacking(); }
     else if (e.code === 'Period' && this.city) this.selectIdleWorker();
     else if (e.code === 'Escape' && this.placing) this.stopPlacing();
     else if (e.code === 'KeyF') this.cycleFormation(sqs);
