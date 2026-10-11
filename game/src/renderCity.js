@@ -31,63 +31,87 @@ const rod = (x0, y0, z0, x1, y1, z1, w, col) => {
   const m = new THREE.Matrix4().lookAt(b, a, new THREE.Vector3(0, 1, 0)).setPosition(a.clone().add(b).multiplyScalar(0.5));
   return part(B(w, w, len), col).applyMatrix4(m);
 };
-// Felt yurt (боз үй): a straight lattice wall, a conical roof tied down with crossing ropes, the open tunduk on top,
-// ornament bands, diamonds, a carved door with the door felt rolled up above it. A rich yurt hangs shields with horsetail tassels.
+// Felt yurt (боз үй), after the reference: a straight wall with ornament bands of brown scrolls on white felt,
+// vertical ropes with diamonds between them, a softly convex roof netted by crossing ropes, a small tunduk,
+// a tall carved door with the door felt rolled up above it. A rich yurt hangs round shields with horsetail tassels.
+const scroll = (s, col) => mergeGeos([part(new THREE.TorusGeometry(s * 0.5, s * 0.16, 3, 6, Math.PI), col, -s * 0.5, -s * 0.12, 0),
+  part(new THREE.TorusGeometry(s * 0.5, s * 0.16, 3, 6, Math.PI), col, s * 0.5, s * 0.12, 0, 0, 0, Math.PI)]);
 const yurt = (r, col = C.felt, rich = false) => {
-  const H = r * 0.47, R = r * 0.55, ct = r * 0.23, seg = 32, band = '#7a5a3e', rope = '#b39a76', out = [];
-  out.push(part(CY(r, r * 1.01, H, seg), col, 0, H / 2), part(CY(ct, r * 1.06, R, seg), col, 0, H + R / 2));
-  // ornament bands at the foot of the wall and under the roof, each with a row of cream scrolls
-  for (const [y, h] of [[r * 0.07, r * 0.07], [H - r * 0.05, r * 0.06]]) {
-    out.push(part(CY(r * 1.012, r * 1.014, h, seg), band, 0, y));
-    for (let i = 0; i < 28; i++) { const a = (i / 28) * Math.PI * 2; out.push(part(B(h * 0.45, h * 0.45, 0.03), '#e8dcc0', Math.sin(a) * r * 1.02, y, Math.cos(a) * r * 1.02, 0, a, Math.PI / 4)); }
-  }
-  // vertical ropes over the wall, a diamond between each pair
-  for (let i = 0; i < 16; i++) {
-    const a = (i / 16) * Math.PI * 2 + Math.PI / 16;
-    if (Math.abs(Math.sin(a)) < 0.2 && Math.cos(a) > 0) continue; // the door
-    out.push(part(B(r * 0.022, H, 0.03), rope, Math.sin(a) * r * 1.018, H / 2, Math.cos(a) * r * 1.018, 0, a));
-    const b2 = a + Math.PI / 16, dx = Math.sin(b2) * r * 1.02, dz = Math.cos(b2) * r * 1.02;
-    if (Math.abs(Math.sin(b2)) < 0.25 && Math.cos(b2) > 0) continue;
-    if (rich && i % 2 === 0) { // round shield with a boss and a horsetail tassel
-      out.push(part(CY(r * 0.075, r * 0.075, 0.08, 14).rotateX(Math.PI / 2), '#2e2620', dx * 1.01, H * 0.55, dz * 1.01, 0, b2, 0),
-        part(CY(r * 0.035, r * 0.035, 0.1, 10).rotateX(Math.PI / 2), '#c27a3a', dx * 1.02, H * 0.55, dz * 1.02, 0, b2, 0),
-        part(new THREE.ConeGeometry(r * 0.02, r * 0.16, 6), '#c8a46a', dx * 1.03, H * 0.55 - r * 0.12, dz * 1.03, Math.PI));
-    } else {
-      out.push(part(B(r * 0.1, r * 0.1, 0.03), band, dx, H * 0.55, dz, 0, b2, Math.PI / 4), part(B(r * 0.05, r * 0.05, 0.04), '#e8dcc0', dx * 1.002, H * 0.55, dz * 1.002, 0, b2, Math.PI / 4));
+  const H = r * 0.48, R = r * 0.64, ct = r * 0.16, band = '#7a5a3e', rope = '#b39a76', out = [];
+  // roof profile: shoulder over the wall, then a slightly bulging cone up to the tunduk
+  const roofR = (u) => r * 0.985 + (ct - r * 0.985) * u, roofY = (u) => H + r * 0.05 + (R - r * 0.05) * u + r * 0.015 * Math.sin(Math.PI * u);
+  const prof = [new THREE.Vector2(r, 0), new THREE.Vector2(r, H * 0.98), new THREE.Vector2(r * 1.012, H + r * 0.02), new THREE.Vector2(r * 0.995, H + r * 0.045)];
+  for (let i = 0; i <= 10; i++) prof.push(new THREE.Vector2(roofR(i / 10), roofY(i / 10)));
+  out.push(part(new THREE.LatheGeometry(prof, 40), col));
+  // ornament bands: two thin brown lines with a row of scrolls between them
+  const sc = scroll(r * 0.05, band), nS = r > 4 ? 40 : 30;
+  for (const yc of [r * 0.075, H - r * 0.07]) {
+    for (const dy of [-r * 0.045, r * 0.045]) out.push(part(CY(r * 1.004, r * 1.004, r * 0.012, 40), band, 0, yc + dy));
+    for (let i = 0; i < nS; i++) {
+      const a = (i / nS) * Math.PI * 2;
+      if (Math.abs(Math.sin(a)) < 0.19 && Math.cos(a) > 0) continue; // the door
+      out.push(part(sc, band, Math.sin(a) * r * 1.006, yc, Math.cos(a) * r * 1.006, 0, a, 0));
     }
   }
-  // crossing ropes over the roof
-  for (let i = 0; i < 12; i++) for (const sgn of [-1, 1]) {
-    const a0 = (i / 12) * Math.PI * 2, a1 = a0 + sgn * 0.85;
-    out.push(rod(Math.sin(a0) * r * 1.07, H + 0.02, Math.cos(a0) * r * 1.07, Math.sin(a1) * ct * 1.08, H + R + 0.03, Math.cos(a1) * ct * 1.08, r * 0.018, rope));
+  // vertical ropes over the wall, a diamond (or a shield) between each pair
+  for (let i = 0; i < 16; i++) {
+    const a = (i / 16) * Math.PI * 2 + Math.PI / 16, b2 = a + Math.PI / 16;
+    const door = (t) => Math.abs(Math.sin(t)) < 0.24 && Math.cos(t) > 0;
+    if (!door(a)) out.push(part(B(r * 0.016, H, 0.03), rope, Math.sin(a) * r * 1.01, H / 2, Math.cos(a) * r * 1.01, 0, a));
+    if (door(b2)) continue;
+    const dx = Math.sin(b2) * r * 1.008, dz = Math.cos(b2) * r * 1.008;
+    if (rich && i % 2 === 0) {
+      const y = H * 0.6;
+      out.push(part(CY(r * 0.1, r * 0.1, 0.08, 18).rotateX(Math.PI / 2), '#2e2620', dx * 1.01, y, dz * 1.01, 0, b2, 0),
+        part(CY(r * 0.055, r * 0.055, 0.1, 14).rotateX(Math.PI / 2), '#a35a2a', dx * 1.02, y, dz * 1.02, 0, b2, 0),
+        part(CY(r * 0.025, r * 0.025, 0.12, 10).rotateX(Math.PI / 2), '#e0b56a', dx * 1.025, y, dz * 1.025, 0, b2, 0),
+        part(new THREE.ConeGeometry(r * 0.028, r * 0.24, 6), '#d2b27a', dx * 1.035, y - r * 0.2, dz * 1.035, Math.PI));
+    } else {
+      out.push(part(B(r * 0.13, r * 0.13, 0.03), band, dx, H * 0.52, dz, 0, b2, Math.PI / 4), part(B(r * 0.085, r * 0.085, 0.04), col, dx * 1.002, H * 0.52, dz * 1.002, 0, b2, Math.PI / 4),
+        part(B(r * 0.035, r * 0.035, 0.05), band, dx * 1.004, H * 0.52, dz * 1.004, 0, b2, Math.PI / 4));
+    }
   }
-  // the tunduk: a wooden ring with crossed slats over the smoke hole
-  out.push(part(CY(ct * 1.04, ct * 1.1, r * 0.06, 20), '#8a6a44', 0, H + R + r * 0.02), part(CY(ct * 0.94, ct * 0.94, 0.04, 20), '#241a12', 0, H + R + r * 0.045));
-  for (const o of [-0.45, 0, 0.45]) out.push(part(B(r * 0.025, r * 0.025, ct * 1.9), '#9b7a50', o * ct, H + R + r * 0.06, 0), part(B(ct * 1.9, r * 0.025, r * 0.025), '#9b7a50', 0, H + R + r * 0.065, o * ct));
-  // door: carved frame, dark opening and the rolled door felt above it
-  const dh = Math.min(H * 0.86, 2.1), dw = Math.max(0.9, r * 0.24);
-  out.push(part(B(dw, dh, 0.08), '#2a1d16', 0, dh / 2, r * 1.0),
-    part(B(0.14, dh + 0.1, 0.16), '#8a6a44', -dw / 2 - 0.07, (dh + 0.1) / 2, r * 1.01), part(B(0.14, dh + 0.1, 0.16), '#8a6a44', dw / 2 + 0.07, (dh + 0.1) / 2, r * 1.01),
-    part(B(dw + 0.3, 0.14, 0.16), '#8a6a44', 0, dh + 0.07, r * 1.01), part(B(dw + 0.3, 0.1, 0.2), '#7a5a3a', 0, 0.05, r * 1.02),
-    part(CY(r * 0.06, r * 0.06, dw + r * 0.22, 10), '#efe6d2', 0, H - r * 0.01, r * 1.07, 0, 0, Math.PI / 2),
-    part(B(0.05, r * 0.14, r * 0.13), rope, -dw * 0.35, H - r * 0.01, r * 1.07), part(B(0.05, r * 0.14, r * 0.13), rope, dw * 0.35, H - r * 0.01, r * 1.07));
-  if (rich) out.push(part(B(dw - 0.1, 0.12, 0.05), C.gold, 0, dh - 0.25, r * 1.03), part(B(dw - 0.1, 0.12, 0.05), C.gold, 0, 0.4, r * 1.03));
+  // ropes winding round the roof in both directions, crossing into a net of diamonds
+  const steps = 9;
+  for (let k = 0; k < 10; k++) for (const sg of [-1, 1]) {
+    let prev = null;
+    for (let j = 0; j <= steps; j++) {
+      const t = j / steps, u = 0.06 + 0.8 * t, a = (k / 10) * Math.PI * 2 + sg * 1.5 * t, rr = roofR(u) * 1.012 + 0.02, y = roofY(u) + 0.03;
+      const pt = [Math.sin(a) * rr, y, Math.cos(a) * rr];
+      if (prev) out.push(rod(...prev, ...pt, r * 0.012, rope));
+      prev = pt;
+    }
+  }
+  // the tunduk: a felt-wrapped ring over a dark smoke hole crossed by a few slats
+  const top = roofY(1);
+  out.push(part(new THREE.TorusGeometry(ct, r * 0.03, 6, 20), '#e9e2d2', 0, top, 0, Math.PI / 2), part(CY(ct * 0.98, ct * 0.98, 0.04, 20), '#3a2a20', 0, top - 0.02, 0));
+  for (const o of [-0.35, 0.35]) out.push(part(B(r * 0.012, r * 0.012, ct * 1.9), '#9b7a50', o * ct, top + 0.01, 0), part(B(ct * 1.9, r * 0.012, r * 0.012), '#9b7a50', 0, top + 0.02, o * ct));
+  // door: a tall carved frame, a dark opening and the door felt rolled up above it
+  const dh = H * 0.96, dw = r * 0.34, fz = r * 0.995;
+  out.push(part(B(dw, dh, 0.1), '#21170f', 0, dh / 2, fz),
+    part(B(r * 0.05, dh + 0.06, 0.18), '#8a6a44', -dw / 2 - r * 0.025, dh / 2, fz + 0.03), part(B(r * 0.05, dh + 0.06, 0.18), '#8a6a44', dw / 2 + r * 0.025, dh / 2, fz + 0.03),
+    part(B(dw + r * 0.1, r * 0.05, 0.18), '#8a6a44', 0, dh, fz + 0.03), part(B(dw + r * 0.1, r * 0.04, 0.24), '#7a5a3a', 0, r * 0.02, fz + 0.05),
+    part(CY(r * 0.08, r * 0.08, dw + r * 0.24, 14), '#f3eee2', 0, H + r * 0.06, fz + r * 0.06, 0, 0, Math.PI / 2),
+    part(CY(r * 0.084, r * 0.084, r * 0.02, 14), rope, -dw * 0.38, H + r * 0.06, fz + r * 0.06, 0, 0, Math.PI / 2),
+    part(CY(r * 0.084, r * 0.084, r * 0.02, 14), rope, dw * 0.38, H + r * 0.06, fz + r * 0.06, 0, 0, Math.PI / 2));
+  if (rich) out.push(part(B(dw, r * 0.025, 0.04), C.gold, 0, dh - r * 0.06, fz + 0.06));
   return out;
 };
 // Tuu: a tall pole with a spearhead and a pennant whose edge is cut into flames.
 const pennant = (() => {
-  const L = 1, Hh = 1, tip = [L, -1.0 * Hh], end = [0, -0.72 * Hh], sh = new THREE.Shape();
-  sh.moveTo(0, 0); sh.lineTo(0.5 * L, -0.02 * Hh); sh.lineTo(tip[0], tip[1]);
-  for (let k = 1; k <= 8; k++) {
-    const t = k / 9, x = tip[0] + (end[0] - tip[0]) * t, y = tip[1] + (end[1] - tip[1]) * t;
-    sh.lineTo(x - 0.03, y - (k % 2 ? 0.13 : 0.02) * Hh);
+  // a long pennant tapering to a point, its lower edge cut into curling flames
+  const sh = new THREE.Shape(), tip = [1, -0.5], end = [0, -1];
+  sh.moveTo(0, 0); sh.quadraticCurveTo(0.45, 0.02, tip[0], tip[1]);
+  for (let k = 1; k <= 7; k++) {
+    const t = k / 7.5, x = tip[0] + (end[0] - tip[0]) * t, y = tip[1] + (end[1] - tip[1]) * t;
+    sh.quadraticCurveTo(x + 0.02, y - 0.16, x - 0.06, y - 0.02);
   }
   sh.lineTo(end[0], end[1]); sh.lineTo(0, 0);
-  return new THREE.ExtrudeGeometry(sh, { depth: 0.04, bevelEnabled: false });
+  return new THREE.ExtrudeGeometry(sh, { depth: 0.04, bevelEnabled: false, curveSegments: 4 });
 })();
 const tuu = (x, z, h, color) => [part(CY(0.06, 0.09, h, 6), '#7a5a3a', x, h / 2, z), part(CY(0.1, 0.1, 0.25, 6), '#c9a24a', x, h * 0.62, z),
   part(new THREE.ConeGeometry(0.09, 0.7, 6), '#b9b2a2', x, h + 0.35, z), part(B(0.5, 0.05, 0.05), '#b9b2a2', x, h + 0.05, z), part(B(0.05, 0.3, 0.05), '#b9b2a2', x - 0.24, h + 0.15, z), part(B(0.05, 0.3, 0.05), '#b9b2a2', x + 0.24, h + 0.15, z),
-  part(pennant, color, x + 0.05, h - 0.25, z, 0, 0, -0.1, h * 0.26, h * 0.2, 1)];
+  part(pennant, color, x + 0.05, h - 0.2, z, 0, 0, -0.06, h * 0.3, h * 0.16, 1)];
 const sheep = (x, z, k) => [part(new THREE.SphereGeometry(0.5, 7, 5), k % 5 ? '#efe9dc' : '#6b5a48', x, 0.55, z, 0, k, 0, 1.3, 0.8, 0.8), part(new THREE.SphereGeometry(0.2, 6, 4), '#2b2420', x + Math.sin(k) * 0.65, 0.65, z + Math.cos(k) * 0.65)];
 const fence = (r, n) => { const out = []; for (let i = 0; i < n; i++) { const a = (i / n) * Math.PI * 2; out.push(part(B(0.14, 1.3, 0.14), C.wood, Math.cos(a) * r, 0.65, Math.sin(a) * r)); }
   out.push(part(new THREE.TorusGeometry(r, 0.05, 4, n * 2), '#8a6a44', 0, 1.05, 0, Math.PI / 2), part(new THREE.TorusGeometry(r, 0.05, 4, n * 2), '#8a6a44', 0, 0.55, 0, Math.PI / 2)); return out; };
@@ -303,7 +327,7 @@ const fieldGeo = (b) => {
 };
 
 // Where a home fire smokes: the tandir in a yard, the tunduk of a yurt.
-const HEARTH = { uy: [-3.3, 0.9, 4.35], boz: [0, 3.4, 0], ordo: [0, 5.9, 0], kurultai: [0, 5.5, 0], jooker: [-2.2, 3.5, -1] };
+const HEARTH = { uy: [-3.3, 0.9, 4.35], boz: [0, 3.6, 0], ordo: [0, 6.2, 0], kurultai: [0, 5.8, 0], jooker: [-2.2, 3.7, -1] };
 
 export class CityRenderer {
   constructor(scene, sim, eco, trees) {
