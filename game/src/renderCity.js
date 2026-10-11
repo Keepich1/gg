@@ -103,6 +103,82 @@ const lattice = (x, y, z, w, h) => {
   return out;
 };
 
+// ---------- fortifications: drawn along x and centred, a little longer than their spacing so neighbours overlap ----------
+// three teeth in the middle of each piece: neighbours overlap, so a full row would double up at the joins
+const merlonRow = (L, y, z, col, w = 0.62) => { const out = []; for (const x of [-1.02, 0, 1.02]) out.push(part(B(w, 0.62, 0.42), col, x, y, z), part(new THREE.CylinderGeometry(w / 2, w / 2, 0.42, 8, 1, false, 0, Math.PI), col, x, y + 0.31, z, Math.PI / 2, 0, 0)); return out; };
+const pakhsa = () => {
+  const L = 3.95, T = 1.8, H = 3.6, out = [part(B(L, 0.8, T + 0.5), C.adobe2, 0, -0.1), part(B(L, H, T), '#c4a273', 0, H / 2)];
+  for (const y of [0.85, 1.75, 2.65]) out.push(part(B(L + 0.02, 0.07, T + 0.03), '#a88a60', 0, y)); // rammed courses
+  out.push(part(B(L, 0.22, T + 0.16), '#b39566', 0, H + 0.08), ...merlonRow(L, H + 0.5, T / 2 - 0.22, '#c4a273'), ...merlonRow(L, H + 0.5, -T / 2 + 0.22, '#c4a273'));
+  return out;
+};
+const stoneWall = () => {
+  const L = 3.95, T = 2.2, H = 4.4, out = [part(B(L, 0.9, T + 0.6), '#7f7a71', 0, -0.05), part(B(L, H, T), '#9c968b', 0, H / 2)];
+  for (let y = 0.6; y < H; y += 0.55) out.push(part(B(L + 0.02, 0.05, T + 0.03), '#837d73', 0, y));
+  for (const x of [-1.3, 0.1, 1.2]) for (const y of [0.9, 2.5]) out.push(part(B(0.06, 0.5, T + 0.03), '#837d73', x + (y > 2 ? 0.5 : 0), y));
+  out.push(part(B(L, 0.25, T + 0.2), '#8c867c', 0, H + 0.1), ...merlonRow(L, H + 0.55, T / 2 - 0.22, '#9c968b', 0.7), ...merlonRow(L, H + 0.55, -T / 2 + 0.22, '#9c968b', 0.7));
+  return out;
+};
+const palisade = () => {
+  const out = [];
+  for (let i = 0; i < 10; i++) {
+    const x = -1.71 + i * 0.38, h = 3.1 + ((i * 37) % 7) * 0.08, c = ['#7a5a3a', '#6b4e33', '#856543'][i % 3];
+    out.push(part(CY(0.19, 0.21, h, 7), c, x, h / 2), part(new THREE.ConeGeometry(0.19, 0.45, 7), c, x, h + 0.22));
+  }
+  out.push(part(B(3.9, 0.18, 0.16), '#5a3d22', 0, 0.9, 0.24), part(B(3.9, 0.18, 0.16), '#5a3d22', 0, 2.3, 0.24),
+    part(B(0.14, 2.6, 0.14), '#5a3d22', -1.2, 1.3, 0.42, 0.35), part(B(0.14, 2.6, 0.14), '#5a3d22', 1.2, 1.3, 0.42, 0.35));
+  return out;
+};
+// two leaves hinged at ±hx, swung open by `phi` towards +z
+const gateLeaves = (hx, w, h, col, z0 = 0, phi = 1.2) => [
+  part(B(w, h, 0.14), col, -hx + (w / 2) * Math.cos(phi), h / 2, z0 + (w / 2) * Math.sin(phi), 0, -phi),
+  part(B(w, h, 0.14), col, hx - (w / 2) * Math.cos(phi), h / 2, z0 + (w / 2) * Math.sin(phi), 0, phi)];
+const darvoza = (F) => {
+  const out = [];
+  for (const sx of [-1, 1]) {
+    const x = sx * 2.7;
+    out.push(part(B(1.9, 6.6, 3.4), C.adobe, x, 3.1), part(B(1.5, 3.4, 0.08), C.turq, x, 3.9, 1.74), part(B(1.5, 3.4, 0.08), C.turq, x, 3.9, -1.74),
+      part(B(1.1, 0.5, 0.1), C.gold, x, 5.8, 1.76), part(CY(1.05, 1.15, 0.6, 12), C.adobe2, x, 6.7), part(DOME(1.0, 10), C.turq, x, 7.0));
+  }
+  out.push(part(B(3.6, 1.6, 3.4), C.adobe, 0, 5.7), part(B(3.4, 0.4, 0.1), C.gold, 0, 5.4, 1.76), ...merlonRow(7.2, 6.9, 1.5, C.adobe), ...merlonRow(7.2, 6.9, -1.5, C.adobe),
+    part(B(3.4, 0.25, 3.4), '#9b7a50', 0, 0.02), ...gateLeaves(1.75, 1.7, 4.4, '#6a4426', 1.7), ...flag(F.color, 2.7, 7.4, 0, 4));
+  return out;
+};
+const darbaza = (F) => {
+  const out = [];
+  for (const sx of [-1, 1]) {
+    const x = sx * 2.55;
+    for (const dx of [-0.45, 0, 0.45]) for (const dz of [-0.6, 0, 0.6]) if (dx || dz) out.push(part(CY(0.2, 0.22, 5.2 + Math.abs(dx) * 0.6, 7), '#7a5a3a', x + dx, 2.6, dz));
+    out.push(part(new THREE.ConeGeometry(0.75, 0.9, 8), '#5a3d22', x, 5.9));
+  }
+  out.push(part(CY(0.22, 0.22, 6.2, 7), '#6b4e33', 0, 4.5, 0, 0, 0, Math.PI / 2), part(B(4, 0.6, 0.15), '#8a6a44', 0, 4.9, 0.3),
+    ...gateLeaves(1.9, 1.85, 3.6, '#7a5a3a', 0.6), ...tuu(2.55, 0.7, 7.8, F.color));
+  return out;
+};
+const burj = (F) => {
+  const out = [part(CY(3.15, 3.5, 8.4, 18), C.adobe, 0, 4.2), part(CY(3.18, 3.2, 0.7, 18), C.turq, 0, 6.6), part(CY(3.19, 3.21, 0.12, 18), C.gold, 0, 7.0),
+    part(CY(3.45, 3.3, 0.45, 18), C.adobe2, 0, 8.3), part(B(1.4, 2.4, 0.3), '#3a2a20', 0, 1.2, 3.35), part(B(1.6, 0.3, 0.32), C.gold, 0, 2.5, 3.37)];
+  for (let i = 0; i < 12; i++) { const a = (i / 12) * Math.PI * 2; out.push(part(B(0.7, 0.75, 0.42), C.adobe, Math.sin(a) * 3.15, 8.9, Math.cos(a) * 3.15, 0, a)); }
+  for (let i = 0; i < 6; i++) { const a = (i / 6) * Math.PI * 2 + 0.5; out.push(part(B(0.18, 0.9, 0.2), '#2a1d16', Math.sin(a) * 3.3, 4.8, Math.cos(a) * 3.3, 0, a)); }
+  out.push(...flag(F.color, 2.2, 8.5, -2.2, 4));
+  return out;
+};
+const munara = (F) => {
+  const out = [], P = 1.8, H = 7;
+  for (const [x, z] of [[-P, -P], [P, -P], [-P, P], [P, P]]) out.push(part(CY(0.17, 0.22, H, 7), '#7a5a3a', x, H / 2, z));
+  // X braces on every side, two storeys
+  const bl = Math.hypot(2 * P, 2.4), ba = Math.atan2(2 * P, 2.4);
+  for (const y of [1.6, 4.2]) for (const sg of [-1, 1]) {
+    out.push(part(B(0.1, bl, 0.1), '#5a3d22', 0, y, -P, 0, 0, sg * ba), part(B(0.1, bl, 0.1), '#5a3d22', 0, y, P, 0, 0, sg * ba),
+      part(B(0.1, bl, 0.1), '#5a3d22', -P, y, 0, sg * ba, 0, 0), part(B(0.1, bl, 0.1), '#5a3d22', P, y, 0, sg * ba, 0, 0));
+  }
+  out.push(part(B(4.4, 0.3, 4.4), '#8a6a44', 0, H));
+  for (const [x, z] of [[-2.1, -2.1], [2.1, -2.1], [-2.1, 2.1], [2.1, 2.1], [0, -2.1], [0, 2.1], [-2.1, 0], [2.1, 0]]) out.push(part(B(0.12, 1, 0.12), '#6b4e33', x, H + 0.6, z));
+  for (const y of [H + 0.55, H + 1.05]) out.push(part(B(4.3, 0.1, 0.1), '#7a5a3a', 0, y, 2.1), part(B(4.3, 0.1, 0.1), '#7a5a3a', 0, y, -2.1), part(B(0.1, 0.1, 4.3), '#7a5a3a', 2.1, y, 0), part(B(0.1, 0.1, 4.3), '#7a5a3a', -2.1, y, 0));
+  out.push(...ladder(0, 2.55, H + 0.2, 0), ...tuu(2.1, -2.1, H + 3, F.color));
+  return out;
+};
+
 const MODEL = {
   urda: (F) => [
     part(B(18, 2.4, 18), C.brick, 0, -0.9), part(B(14, 7, 14), C.adobe, 0, 3.5), part(B(14.4, 0.6, 14.4), C.adobe2, 0, 7.3), ...merlons(14, 14, 7.9),
@@ -152,6 +228,7 @@ const MODEL = {
     ...[-1.2, -0.6, 0, 0.6, 1.2].map((x) => part(CY(0.03, 0.03, 3, 4), C.wood, x + 4, 1.5, -3.6, 0.15)), part(B(3.2, 0.12, 0.12), C.wood, 4, 1.9, -3.4)],
   jylky: () => [...pen(15, 11), ...yurt(2.4, '#e6dcc8').map((g) => g.translate(-5.2, 0, -3.2)), ...steed(1, 1, 0.6, '#6e4529'), ...steed(4, -1.5, 2.2, '#3a2a20'), ...steed(-1.5, 3, -1, '#b38b5a'), ...steed(4.5, 3, 1.4, '#cfc7b8'),
     part(new THREE.SphereGeometry(1, 8, 6), C.hay, 5.5, 0.5, -4, 0, 0, 0, 1, 0.6, 1), part(B(2.6, 0.45, 0.6), C.wood, -1.5, 0.3, -4.6)],
+  devor: pakhsa, tosh: stoneWall, chep: palisade, darvoza, darbaza, burj, munara,
   kurultai: (F) => [part(B(14, 0.4, 14), '#8a7a58', 0, -0.1), ...yurt(5, '#f5f0e4', true), ...[[6, 6], [-6, 6], [6, -6], [-6, -6]].flatMap(([x, z]) => tuu(x, z, 7.5, F.color)),
     part(B(3, 0.05, 2), C.red, -3.5, 0.15, 6.4), part(B(3, 0.05, 2), '#26407a', 3.5, 0.15, 6.4)],
 };
@@ -205,6 +282,7 @@ export class CityRenderer {
     // placement ghost
     this.ghost = null; this.ghostKey = null;
     this.ghostMat = new THREE.MeshBasicMaterial({ color: '#7fe07a', transparent: true, opacity: 0.45, depthWrite: false });
+    this.ghostInst = new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.5, depthWrite: false });
     this.outline = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()]), new THREE.LineBasicMaterial({ color: '#f5f1c8' }));
     this.outline.visible = false; this.root.add(this.outline);
     this.rally = new THREE.Group();
@@ -228,8 +306,8 @@ export class CityRenderer {
     else { body = new THREE.Mesh(this.geoFor(b.key, b.team), this.mat); body.castShadow = true; body.receiveShadow = true; }
     grp.add(body);
     let scaf = null;
-    if (!b.done) { scaf = new THREE.Mesh(scaffold(b.w * 0.92, b.d * 0.92, b.T.field ? 1.2 : 6), this.mat); scaf.castShadow = true; grp.add(scaf); }
-    grp.position.set(b.x, b.y, b.z);
+    if (!b.done && !b.T.seg) { scaf = new THREE.Mesh(scaffold(b.w * 0.92, b.d * 0.92, b.T.field ? 1.2 : 6), this.mat); scaf.castShadow = true; grp.add(scaf); }
+    grp.position.set(b.x, b.y, b.z); body.rotation.y = b.ang || 0;
     this.root.add(grp);
     this.onPlace?.(b);
     v = { grp, body, scaf, sink: 0 };
@@ -242,13 +320,29 @@ export class CityRenderer {
     this.ghostKey = key;
     if (!key) return;
     const T = BUILDINGS[key];
+    if (T.seg) { // a chain of pieces, each green or red
+      this.ghost = new THREE.InstancedMesh(this.geoFor(key, 0), this.ghostInst, 200); this.ghost.count = 0;
+      this.ghost.setColorAt(0, new THREE.Color()); this.ghost.frustumCulled = false; this.ghost.renderOrder = 5; this.root.add(this.ghost);
+      return;
+    }
     this.ghost = T.field ? new THREE.Mesh(B(T.w, 0.3, T.d).translate(0, 0.15, 0), this.ghostMat) : new THREE.Mesh(this.geoFor(key, 0), this.ghostMat);
     this.ghost.renderOrder = 5; this.root.add(this.ghost);
   }
-  moveGhost(x, z, ok) {
-    if (!this.ghost) return;
+  showWallPlan(plan) {
+    const g = this.ghost; if (!g?.isInstancedMesh) return;
+    g.visible = true;
+    const d = this.dummy, c = new THREE.Color(), n = Math.min(plan.length, 200);
+    for (let i = 0; i < n; i++) {
+      const p = plan[i];
+      d.position.set(p.x, groundY(p.x, p.z), p.z); d.rotation.set(0, p.ang, 0); d.scale.setScalar(1); d.updateMatrix();
+      g.setMatrixAt(i, d.matrix); g.setColorAt(i, c.set(p.skip ? '#d8d0b8' : p.ok ? '#7fe07a' : '#ff6b5a'));
+    }
+    g.count = n; g.instanceMatrix.needsUpdate = true; g.instanceColor.needsUpdate = true;
+  }
+  moveGhost(x, z, ok, ang = 0) {
+    if (!this.ghost || this.ghost.isInstancedMesh) return;
     this.ghost.visible = true;
-    this.ghost.position.set(x, groundY(x, z), z);
+    this.ghost.position.set(x, groundY(x, z), z); this.ghost.rotation.y = ang;
     this.ghostMat.color.set(ok ? '#7fe07a' : '#ff6b5a');
   }
   hideGhost() { if (this.ghost) this.ghost.visible = false; }
@@ -273,7 +367,7 @@ export class CityRenderer {
     if (puff) this.smokeT = 0.25;
     for (const b of sim.buildings) {
       const v = this.viewFor(b);
-      if (b.dead && b.packed) { if (v.grp.parent) this.root.remove(v.grp); continue; }
+      if (b.dead && (b.packed || b.replaced)) { if (v.grp.parent) this.root.remove(v.grp); continue; }
       if (b.dead) {
         v.sink += dt;
         v.grp.position.y = b.y - v.sink * 1.6; v.grp.rotation.z = Math.min(0.12, v.sink * 0.05);

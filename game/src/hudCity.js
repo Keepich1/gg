@@ -1,7 +1,7 @@
 // City-mode interface: resource bar, building panel with training queue, build menu for workers, officer commands.
 import { icon } from './icons.js';
 import { TYPES, FORMATIONS, formationsFor } from './units.js';
-import { BUILDINGS, BUILD_MENU, RES, RES_NAMES } from './buildings.js';
+import { BUILDINGS, BUILD_MENU, FORT_MENU, RES, RES_NAMES } from './buildings.js';
 import { MAX_SQUAD } from './sim.js';
 
 const $ = (id) => document.getElementById(id);
@@ -10,7 +10,7 @@ const costHtml = (c) => Object.entries(c).map(([k, v]) => `<span data-res="${k}"
 
 export class CityPanel {
   constructor({ input }) {
-    this.input = input; this.sim = null; this.city = null;
+    this.input = input; this.sim = null; this.city = null; this.tab = 'eco';
     $('citypanel').addEventListener('click', (e) => this.act(e));
     $('orders').addEventListener('click', (e) => { if (this.city) this.act(e); });
   }
@@ -28,6 +28,8 @@ export class CityPanel {
     else if (a === 'pack') inp.packSelected(false);
     else if (a === 'packcamp') inp.packSelected(true);
     else if (a === 'unpack') inp.startUnpacking();
+    else if (a === 'tab') { this.tab = b.dataset.k; this.render(); }
+    else if (a === 'ungarrison' && sel) { this.sim.ungarrisonAll(sel); this.render(); }
     else return;
     e.stopPropagation();
   }
@@ -49,18 +51,28 @@ export class CityPanel {
       </div>`;
       const packBtns = mine && b.T.pack && b.done ? `<button type="button" data-act="pack" id="ord-pack" title="Юрта складывается в арбу, её можно увезти и поставить в другом месте">Свернуть в арбу <kbd>K</kbd></button>
         ${b.T.main ? `<button type="button" data-act="packcamp" id="ord-packcamp" class="cry" title="Все юрты в радиусе 170 м складываются в арбы">Көч: свернуть весь лагерь <kbd>Shift+K</kbd></button>` : ''}` : '';
-      orders.innerHTML = `<span class="hint">${mine ? (b.T.trains ? 'ПКМ по земле, ресурсу или полю — сборный пункт' : b.T.drop ? `Принимает: ${b.T.drop.map((r) => RES_NAMES[r].toLowerCase()).join(', ')}` : b.T.herd ? 'Отара пасётся сама. Вытопчет траву — сверните короо и перегоните' : '') : 'Вражеское здание: выберите войска и ПКМ по нему, чтобы атаковать'}</span>${packBtns}${this.idleBtn()}`;
+      const n = b.T.tower ? this.sim.garrisonOf(b).length : 0;
+      const towerBtn = mine && b.T.tower && n ? `<button type="button" data-act="ungarrison" id="ord-ungarrison">Спустить воинов (${n})</button>` : '';
+      const hint = !mine ? 'Вражеское здание: выберите войска и ПКМ по нему, чтобы атаковать'
+        : b.T.tower ? 'ПКМ пешими воинами по башне — наверх: лучники бьют дальше, мечники бросают камни'
+        : b.T.seg ? 'Свои обходят стену через ворота, враг будет её ломать'
+        : b.T.gate ? 'Свои проходят, враг ломает'
+        : b.T.trains ? 'ПКМ по земле, ресурсу или полю — сборный пункт' : b.T.drop ? `Принимает: ${b.T.drop.map((r) => RES_NAMES[r].toLowerCase()).join(', ')}` : b.T.herd ? 'Отара пасётся сама. Вытопчет траву — сверните короо и перегоните' : '';
+      orders.innerHTML = `<span class="hint">${hint}</span>${towerBtn}${packBtns}${this.idleBtn()}`;
     } else if (sel.length) {
       const workers = sel.filter((q) => q.T.worker), wagons = sel.filter((q) => q.T.wagon), army = sel.filter((q) => !q.T.worker && !q.T.wagon);
       const solos = {}, forms = [];
       for (const q of army) { if (q.solo) (solos[q.key] ||= []).push(q); else forms.push(q); }
       const chips = [];
-      if (workers.length) chips.push(`<span class="chip">${icon('worker')}${workers[0].T.name} ×${workers.length}<em id="jobsum"></em></span>`);
+      if (workers.length) chips.push(`<span class="chip">${icon('worker')}${workers[0].T.name} ×${workers.length}<em id="jobsum"></em></span>`,
+        `<span class="tabs"><button type="button" data-act="tab" data-k="eco" id="tab-eco" aria-pressed="${this.tab === 'eco'}">Хозяйство</button><button type="button" data-act="tab" data-k="fort" id="tab-fort" aria-pressed="${this.tab === 'fort'}">Укрепления</button></span>`);
       if (wagons.length) chips.push(`<span class="chip">${icon('wagon')}Арбы ×${wagons.length}<em>: ${wagons.map((q) => BUILDINGS[q.alive[0].cargo.key].name).join(', ')}</em></span>`);
       for (const [k, list] of Object.entries(solos)) chips.push(`<span class="chip">${icon(TYPES[k].icon)}${TYPES[k].name} ×${list.length}</span>`);
       for (const q of forms) chips.push(`<span class="chip form" id="fchip-${q.id}">${icon(q.T.icon)}Отряд: ${q.T.name} <b class="fn"></b><i class="mor"><i></i></i></span>`);
+      const up = army.filter((q) => q.garrison).length;
+      if (up) chips.push(`<span class="chip">${icon('burj')}В башне: ${up}<em>· приказ идти — спустятся</em></span>`);
       panel.innerHTML = `<div class="up"><div class="chips">${chips.join('')}</div>
-        ${workers.length ? `<div class="buildmenu">${BUILD_MENU[this.sim.teams[0].key].map((k) => `<button type="button" data-act="build" data-k="${k}" id="bm-${k}" title="${BUILDINGS[k].sub}">${icon(k)}<b>${BUILDINGS[k].name}</b><span class="cost">${costHtml(BUILDINGS[k].cost)}</span></button>`).join('')}</div>` : ''}
+        ${workers.length ? `<div class="buildmenu">${(this.tab === 'fort' ? FORT_MENU : BUILD_MENU)[this.sim.teams[0].key].map((k) => `<button type="button" data-act="build" data-k="${k}" id="bm-${k}" title="${BUILDINGS[k].sub}">${icon(k)}<b>${BUILDINGS[k].name}</b><span class="cost">${costHtml(BUILDINGS[k].cost)}${BUILDINGS[k].seg ? '<em>за звено</em>' : ''}</span></button>`).join('')}</div>` : ''}
       </div>`;
       const off = sel.find((q) => q.T.officer && q.solo), formable = army.filter((q) => q.solo && !q.T.officer && !q.T.artillery);
       const byKey = {}; for (const q of formable) byKey[q.key] = (byKey[q.key] || 0) + 1;
@@ -87,7 +99,10 @@ export class CityPanel {
   idleBtn() { return `<button type="button" data-act="idle" id="ord-idle" class="idle">Свободные ${this.sim.teams[0].key === 'kipchak' ? 'малчы' : 'деҳқоны'}: <b id="idle-n">0</b> <kbd>.</kbd></button>`; }
 
   // what the panel was drawn for: redraw when a selected unit dies, a wagon turns into a yurt, a building falls
-  selSig() { const b = this.input.selB; return (b && !b.dead ? 'b' + b.id : '') + '|' + this.input.selectedLive().map((q) => q.id).join(','); }
+  selSig() {
+    const b = this.input.selB, live = this.input.selectedLive();
+    return (b && !b.dead ? 'b' + b.id + (b.T.tower ? ':' + this.sim.garrisonOf(b).length : '') : '') + '|' + live.map((q) => q.id + (q.garrison ? 'g' : '')).join(',');
+  }
 
   // ---------- live numbers ----------
   update() {
@@ -108,7 +123,8 @@ export class CityPanel {
       const hp = $('b-hp'); if (hp) { hp.style.width = (100 * b.hp / b.maxHp) + '%'; $('b-hpn').textContent = `${Math.ceil(b.hp)} / ${b.maxHp}`; }
       const pr = $('b-prog');
       if (pr) pr.textContent = !b.done ? `Строится: ${Math.floor(b.progress * 100)}%` : b.T.field ? `Работают: ${b.users.size} из ${b.T.slots}`
-        : b.T.herd ? `Трава: ${Math.round((b.grass ?? 1) * 100)}% · еда +${Math.round(b.foodRate || 0)}/мин` : b.T.mine ? 'Добыча рядом +50%' : b.blocked ? 'Нужно больше юрт или домов' : '';
+        : b.T.herd ? `Трава: ${Math.round((b.grass ?? 1) * 100)}% · еда +${Math.round(b.foodRate || 0)}/мин` : b.T.mine ? 'Добыча рядом +50%'
+        : b.T.tower ? `Гарнизон: ${this.sim.garrisonOf(b).length} из ${b.T.cap}` : b.blocked ? 'Нужно больше юрт или домов' : '';
       const q = $('b-queue');
       if (q) q.innerHTML = b.queue.map((k, i) => `<button type="button" class="qchip" data-act="cancel" data-i="${i}" title="Отменить: ${TYPES[k].name}">${icon(TYPES[k].icon)}${i === 0 ? `<i style="width:${(100 * b.qT / TYPES[k].time).toFixed(0)}%"></i>` : ''}</button>`).join('') || '<span class="hint">Очередь пуста</span>';
     }

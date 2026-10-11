@@ -3,6 +3,7 @@ import * as THREE from '../vendor/three.module.min.js';
 import { frontage, formationsFor } from './units.js';
 import { BUILDINGS } from './buildings.js';
 import { groundY } from './world.js';
+import { canGarrison } from './sim.js';
 
 const PICK = 26; // px
 
@@ -72,9 +73,17 @@ export class Input {
   move(e) {
     const [x, y] = this.pos(e);
     if (this.placing) {
-      const g = this.rts.groundAt(x, y);
-      if (g) { const px = Math.round(g.x), pz = Math.round(g.z); this.city.cityR.moveGhost(px, pz, this.city.eco.footprintOk(this.placing, px, pz).ok); }
-      else this.city.cityR.hideGhost();
+      const g = this.rts.groundAt(x, y), { eco, cityR } = this.city, T = BUILDINGS[this.placing];
+      if (!g) { cityR.hideGhost(); return; }
+      const px = Math.round(g.x), pz = Math.round(g.z);
+      if (T.seg && !this.unpacking) {
+        // a wall: one piece under the cursor, then the whole stretch from the first click
+        const [sx, sz] = eco.snapWall(this.team, g.x, g.z), [fx, fz] = this.wallFrom || [sx, sz];
+        cityR.showWallPlan(eco.wallPlan(this.team, this.placing, fx, fz, sx, sz));
+      } else if ((T.gate || T.tower) && !this.unpacking) {
+        const f = eco.fortSnap(this.team, this.placing, px, pz);
+        cityR.moveGhost(f.x, f.z, eco.footprintOk(this.placing, f.x, f.z, null, { ang: f.ang, team: this.team }).ok, f.ang);
+      } else cityR.moveGhost(px, pz, eco.footprintOk(this.placing, px, pz).ok);
       return;
     }
     if (this.ldrag) {
@@ -182,6 +191,13 @@ export class Input {
       for (const q of rest) this.sim.order(q, { kind: 'attackB', b, run: this.run });
       this.r3d.marker(b.x, b.z, '#ff6b5a', 2); left = [];
     }
+    if (b && b.team === this.team && !b.dead && b.T.tower && b.done) {
+      const up = rest.filter((q) => canGarrison(q.T));
+      for (const q of up) this.sim.order(q, { kind: 'garrison', b, run: this.run });
+      if (up.length) this.r3d.marker(b.x, b.z, '#7fe8c8', 2);
+      else if (rest.length) eco.say('В башню поднимаются только пешие воины', 'bad');
+      left = rest.filter((q) => !canGarrison(q.T));
+    }
     if (foe) return sqs; // fight
     if (workers.length) {
       if (node) {
@@ -215,10 +231,13 @@ export class Input {
   }
   startPlacing(key) {
     if (!this.city) return;
-    this.placing = key; this.city.cityR.setGhost(key);
-    this.city.eco.say(`Где построить ${BUILDINGS[key].name.toLowerCase()}? ЛКМ — поставить, ПКМ — отмена`, '');
+    const T = BUILDINGS[key];
+    this.placing = key; this.wallFrom = null; this.city.cityR.setGhost(key);
+    this.city.eco.say(T.seg ? `${T.name}: ЛКМ — начало стены, ЛКМ — конец. ПКМ — закончить`
+      : T.gate ? `${T.name}: поставьте на свою стену, ворота встанут по её линии. ПКМ — отмена`
+      : `Где построить ${T.name.toLowerCase()}? ЛКМ — поставить, ПКМ — отмена`, '');
   }
-  stopPlacing() { this.placing = null; this.unpacking = null; this.city?.cityR.setGhost(null); }
+  stopPlacing() { this.placing = null; this.unpacking = null; this.wallFrom = null; this.city?.cityR.setGhost(null); }
   // Nomads: fold the selected yurt (or the whole camp) into wagons, and set wagons down again.
   packSelected(all) {
     const { eco } = this.city || {}, b = this.selB;
@@ -241,8 +260,16 @@ export class Input {
       if (ok) { this.r3d.marker(px, pz, '#ffd66b', 2.5); this.stopPlacing(); }
       return;
     }
-    const builders = this.selectedLive().filter((q) => q.T.worker);
-    const b = this.city.eco.place(this.team, this.placing, Math.round(g.x), Math.round(g.z), builders);
+    const builders = this.selectedLive().filter((q) => q.T.worker), { eco } = this.city;
+    if (BUILDINGS[this.placing].seg) {
+      // first click starts the wall, every next click lays a stretch and carries on from its end
+      const [px, pz] = eco.snapWall(this.team, g.x, g.z);
+      if (!this.wallFrom) { this.wallFrom = [px, pz]; eco.say('Теперь ЛКМ — конец стены. Линию можно продолжать, ПКМ — закончить', ''); return; }
+      const n = eco.placeWall(this.team, this.placing, this.wallFrom[0], this.wallFrom[1], px, pz, builders);
+      if (n) { this.r3d.marker(px, pz, '#ffd66b', 1.5); this.wallFrom = [px, pz]; }
+      return;
+    }
+    const b = eco.place(this.team, this.placing, Math.round(g.x), Math.round(g.z), builders);
     if (b) { this.r3d.marker(b.x, b.z, '#ffd66b', 2); if (!keep) this.stopPlacing(); }
   }
   formSquad() {

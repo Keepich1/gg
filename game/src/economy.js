@@ -1,6 +1,6 @@
 // City economy: stockpiles, resource nodes, worker jobs, construction, training queues, population and food upkeep.
 // Pure logic on top of Sim, so it runs headless too.
-import { BUILDINGS, RES_NAMES, MAIN } from './buildings.js';
+import { BUILDINGS, footprint, RES_NAMES, MAIN } from './buildings.js';
 import { TYPES } from './units.js';
 import { groundY, slopeAt, WATER_Y, HALF, SIZE, BASES, DEPOSITS, treeSpots, mountainW, fbm } from './world.js';
 import { edgePoint } from './sim.js';
@@ -77,8 +77,9 @@ export class Economy {
   missing(team, cost) { return Object.entries(cost).filter(([k, v]) => this.stock[team][k] < v).map(([k, v]) => `${RES_NAMES[k].toLowerCase()} ${Math.ceil(v - this.stock[team][k])}`).join(', '); }
 
   // ---------- buildings ----------
-  footprintOk(key, x, z, ignore = null) {
-    const T = BUILDINGS[key], hw = T.w / 2, hd = T.d / 2;
+  // `ang` turns a wall piece or a gate; walls may join walls, and a gate or tower may sit on its own wall (it replaces those pieces)
+  footprintOk(key, x, z, ignore = null, { ang = 0, team = 0 } = {}) {
+    const T = BUILDINGS[key], [W, D] = footprint(T, ang), hw = W / 2, hd = D / 2, fort = T.seg || T.gate || T.tower;
     if (T.mine && !this.nodes.some((n) => n.amount > 0 && Math.hypot(n.x - x, n.z - z) < n.r + 26)) return { ok: false, why: 'Кен ставится рядом с золотом или камнем' };
     for (const s of this.sim.soldiers) {
       if (!s.alive || !s.unpackAt || s === ignore) continue;
@@ -91,41 +92,125 @@ export class Economy {
       const h = groundY(x + u * hw, z + v * hd);
       if (h < WATER_Y + 0.5) return { ok: false, why: 'Нельзя строить в воде' };
       lo = Math.min(lo, h); hi = Math.max(hi, h);
-      if (slopeAt(x + u * hw, z + v * hd) > 0.5) return { ok: false, why: 'Слишком крутой склон' };
+      if (slopeAt(x + u * hw, z + v * hd) > (T.seg ? 0.65 : 0.5)) return { ok: false, why: 'Слишком крутой склон' };
     }
     if (hi - lo > 4.5) return { ok: false, why: 'Слишком неровная земля' };
     for (const b of this.sim.buildings) {
       if (b.dead) continue;
-      const m = b.walk || T.walk ? 0.5 : 2;
+      const own = b.team === team, bFort = b.T.seg || b.T.gate || b.T.tower;
+      if (own && b.T.seg && fort) continue;                  // joins or replaces its own wall
+      if (own && T.seg && bFort) continue;                   // a wall runs into its own tower or gate
+      const m = b.walk || T.walk ? 0.5 : fort || bFort ? 0.4 : 2;
       if (Math.abs(x - b.x) < hw + b.w / 2 + m && Math.abs(z - b.z) < hd + b.d / 2 + m) return { ok: false, why: 'Место занято' };
     }
     for (const n of this.nodes) if (Math.abs(x - n.x) < hw + n.r + 2 && Math.abs(z - n.z) < hd + n.r + 2) return { ok: false, why: 'Мешает месторождение' };
     let tree = false;
-    // keep clear of the crowns, not just the trunks
-    this.treesNear(x, z, Math.max(hw, hd) + 4, (t) => { if (Math.abs(t.x - x) < hw + 2.2 && Math.abs(t.z - z) < hd + 2.2) tree = true; });
+    // keep clear of the crowns, not just the trunks (a wall only has to miss the trunks)
+    const tm = T.seg ? 0.7 : 2.2;
+    this.treesNear(x, z, Math.max(hw, hd) + 4, (t) => { if (Math.abs(t.x - x) < hw + tm && Math.abs(t.z - z) < hd + tm) tree = true; });
     if (tree) return { ok: false, why: 'Мешают деревья' };
     return { ok: true };
   }
 
-  addBuilding(team, key, x, z, done = false) {
+  // ---------- fortifications ----------
+  // Pieces of a wall from (x0,z0) to (x1,z1): both ends are covered, neighbours overlap so nothing slips between them.
+  wallPlan(team, key, x0, z0, x1, z1) {
+    const T = BUILDINGS[key], L = Math.hypot(x1 - x0, z1 - z0), n = Math.ceil(L / (T.len - 0.45));
+    const ang = L > 0.5 ? Math.atan2(-(z1 - z0), x1 - x0) : 0, out = [];
+    for (let i = 0; i <= n; i++) {
+      const t = n ? i / n : 0, x = x0 + (x1 - x0) * t, z = z0 + (z1 - z0) * t;
+      // a piece already standing here (the end of the last stretch, a tower) is not laid twice
+      const dup = this.sim.buildings.some((b) => !b.dead && b.team === team && ((b.T.seg && Math.hypot(b.x - x, b.z - z) < 1.3) || ((b.T.tower || b.T.gate) && Math.abs(b.x - x) < b.w / 2 && Math.abs(b.z - z) < b.d / 2)));
+      const f = dup ? { ok: false, skip: true } : this.footprintOk(key, x, z, null, { ang, team });
+      out.push({ x, z, ang, ok: f.ok, skip: !!f.skip, why: f.why });
+    }
+    return out;
+  }
+  // Snap a point to the centre of a nearby piece of one's own wall or tower, so stretches join up.
+  snapWall(team, x, z) {
+    let best = null, bd = 4;
+    for (const b of this.sim.buildings) {
+      if (b.dead || b.team !== team || !(b.T.seg || b.T.tower)) continue;
+      const d = Math.hypot(b.x - x, b.z - z);
+      if (d < bd) { bd = d; best = b; }
+    }
+    return best ? [best.x, best.z] : [x, z];
+  }
+  placeWall(team, key, x0, z0, x1, z1, builders = []) {
+    const T = BUILDINGS[key], plan = this.wallPlan(team, key, x0, z0, x1, z1).filter((p) => p.ok);
+    if (!plan.length) { this.say('Здесь стену не поставить', 'bad', team); return 0; }
+    let n = 0;
+    for (const p of plan) {
+      if (!this.canAfford(team, T.cost)) break;
+      this.pay(team, T.cost);
+      this.addBuilding(team, key, p.x, p.z, false, p.ang); n++;
+    }
+    if (n < plan.length) this.say(`Хватило на ${n} из ${plan.length} звеньев: не хватает ${this.missing(team, T.cost)}`, 'bad', team);
+    for (const sq of builders) { const b = this.nextPiece(team, sq.mx, sq.mz); if (b) this.assignBuild(sq, b); }
+    return n;
+  }
+  // A gate takes the line of the wall it is put on; a gate or tower replaces the wall pieces under it.
+  fortSnap(team, key, x, z) {
     const T = BUILDINGS[key];
-    let y = 0; for (const [u, v] of [[0, 0], [-1, -1], [1, -1], [-1, 1], [1, 1]]) y += groundY(x + (u * T.w) / 2, z + (v * T.d) / 2) / 5;
+    let ang = 0;
+    if (T.gate) {
+      let near = null, nd = T.len / 2 + 3;
+      for (const b of this.sim.buildings) {
+        if (b.dead || b.team !== team || !b.T.seg) continue;
+        const d = Math.hypot(b.x - x, b.z - z); if (d < nd) { nd = d; near = b; }
+      }
+      if (near) {
+        ang = near.ang; const ux = Math.cos(ang), uz = -Math.sin(ang), t = (x - near.x) * ux + (z - near.z) * uz;
+        x = near.x + ux * t; z = near.z + uz * t;
+      }
+    }
+    const [W, D] = footprint(T, ang), replace = [];
+    for (const b of this.sim.buildings) {
+      if (b.dead || b.team !== team || !b.T.seg) continue;
+      if (T.gate) {
+        const ux = Math.cos(ang), uz = -Math.sin(ang), along = (b.x - x) * ux + (b.z - z) * uz, across = -(b.x - x) * uz + (b.z - z) * ux;
+        if (Math.abs(along) < T.len / 2 + 0.6 && Math.abs(across) < 2.2) replace.push(b);
+      } else if (Math.abs(b.x - x) < W / 2 + 0.8 && Math.abs(b.z - z) < D / 2 + 0.8) replace.push(b);
+    }
+    return { x: Math.round(x * 10) / 10, z: Math.round(z * 10) / 10, ang, replace };
+  }
+  nextPiece(team, x, z) {
+    const taken = new Map();
+    for (const j of this.jobs.values()) if (j.kind === 'build') taken.set(j.b, (taken.get(j.b) || 0) + 1);
+    let best = null, bs = Infinity;
+    for (const b of this.sim.buildings) {
+      if (b.team !== team || !b.T.seg || b.done || b.dead) continue;
+      const d = Math.hypot(b.x - x, b.z - z); if (d > 70) continue;
+      const sc = d + (taken.get(b) || 0) * 9;
+      if (sc < bs) { bs = sc; best = b; }
+    }
+    return best;
+  }
+  takeDown(b) { b.dead = true; b.replaced = true; b.gone = true; this.sim.bver++; }
+
+  addBuilding(team, key, x, z, done = false, ang = 0) {
+    const T = BUILDINGS[key], [W, D] = footprint(T, ang);
+    let y = 0; for (const [u, v] of [[0, 0], [-1, -1], [1, -1], [-1, 1], [1, 1]]) y += groundY(x + (u * W) / 2, z + (v * D) / 2) / 5;
+    if (T.seg || T.gate) y = Math.min(y, groundY(x, z)); // walls follow the ground and sink into it rather than float
     const b = {
-      id: this.sim.buildings.length, key, T, team, x, z, y, w: T.w, d: T.d, walk: !!T.walk,
+      id: this.sim.buildings.length, key, T, team, x, z, y, w: W, d: D, ang, walk: !!T.walk,
       hp: done ? T.hp : T.hp * 0.1, maxHp: T.hp, progress: done ? 1 : 0, done, dead: false, gone: false,
       queue: [], qT: 0, blocked: false, rally: null, users: new Set(), lastHit: -99,
     };
-    this.sim.buildings.push(b);
+    this.sim.buildings.push(b); this.sim.bver++;
     if (done) this.recalcPop();
     return b;
   }
   place(team, key, x, z, builders = []) {
     const T = BUILDINGS[key];
     if (!this.canAfford(team, T.cost)) { this.say(`Не хватает: ${this.missing(team, T.cost)}`, 'bad', team); return null; }
-    const f = this.footprintOk(key, x, z);
+    let ang = 0, replace = [];
+    if (T.gate || T.tower) ({ x, z, ang, replace } = this.fortSnap(team, key, x, z));
+    const f = this.footprintOk(key, x, z, null, { ang, team });
     if (!f.ok) { this.say(f.why, 'bad', team); return null; }
     this.pay(team, T.cost);
-    const b = this.addBuilding(team, key, x, z, false);
+    for (const p of replace) this.takeDown(p);
+    const b = this.addBuilding(team, key, x, z, false, ang);
     for (const sq of builders) this.assignBuild(sq, b);
     return b;
   }
@@ -216,6 +301,8 @@ export class Economy {
     if (job.kind === 'build') {
       const b = job.b;
       if (b.dead || b.done) {
+        const next = b.T.seg || b.T.gate || b.T.tower ? this.nextPiece(s.team, s.x, s.z) : null;
+        if (next) { this.assignBuild(s.sq, next); return; } // on to the next stretch of the wall
         this.jobs.delete(s); s.faceTo = null;
         if (b.done && b.T.field && b.users.size < b.T.slots) this.assignGather(s.sq, b);
         else if (job.back && !job.back.dead && (job.back.T?.field || job.back.amount > 0)) this.assignGather(s.sq, job.back);
@@ -305,7 +392,7 @@ export class Economy {
     for (const s of b.users) this.jobs.delete(s);
     b.users.clear();
     this.recalcPop();
-    if (b.packed) return;
+    if (b.packed || b.replaced) return;
     if (b.team === 0) this.say(`Разрушено: ${b.T.name}`, 'bad'); else this.say(`Враг потерял: ${b.T.name}`, 'good');
     if (b.T.main && !this.sim.result) this.end(1 - b.team);
   }
@@ -348,8 +435,9 @@ export class Economy {
   }
   pack(b) {
     if (!b.T.pack || !b.done || b.dead) return null;
+    if (b.T.tower) this.sim.ungarrisonAll(b); // the watch climbs down before the tower is taken apart
     for (const k of b.queue) this.pay(b.team, TYPES[k].cost, -1);
-    b.queue = []; b.dead = true; b.packed = true;
+    b.queue = []; b.dead = true; b.packed = true; this.sim.bver++;
     for (const s of b.users) this.jobs.delete(s);
     b.users.clear();
     const sq = this.sim.spawnUnit(b.team, 'arba', b.x, b.z + b.d / 2 + 2.5, 0);

@@ -45,16 +45,16 @@
   #selbox { position: absolute; display: none; border: 1px dashed var(--brass-hi); background: rgba(240, 214, 138, .08); pointer-events: none; }
 
   /* wooden pieces: buttons, tiles, plaques */
-  .wood-btn, .orders button, .sys button, .train button, .buildmenu button, .qchip, .card, .peace button, .end-actions button, .go {
+  .wood-btn, .orders button, .sys button, .train button, .buildmenu button, .qchip, .card, .peace button, .end-actions button, .go, .tabs button {
     border: 0; border-radius: 3px; color: var(--cream); background: var(--wood); background-size: 320px 256px, auto;
     box-shadow: inset 0 1px 0 rgba(255, 222, 160, .22), inset 0 -2px 0 rgba(0, 0, 0, .45), 0 0 0 1px var(--brass-dark), 0 0 0 2px rgba(0, 0, 0, .55), 0 3px 5px rgba(0, 0, 0, .45);
     transition: box-shadow .12s, filter .12s, transform .06s;
   }
-  .orders button:hover, .sys button:hover, .train button:hover, .buildmenu button:hover, .qchip:hover, .card:hover, .peace button:hover, .end-actions button:hover, .go:hover {
+  .orders button:hover, .sys button:hover, .train button:hover, .buildmenu button:hover, .qchip:hover, .card:hover, .peace button:hover, .end-actions button:hover, .go:hover, .tabs button:hover {
     filter: brightness(1.18); box-shadow: inset 0 1px 0 rgba(255, 222, 160, .3), inset 0 -2px 0 rgba(0, 0, 0, .45), 0 0 0 1px var(--brass), 0 0 0 2px rgba(0, 0, 0, .55), 0 0 10px rgba(240, 214, 138, .25);
   }
   .orders button:active, .sys button:active, .train button:active, .buildmenu button:active, .peace button:active, .end-actions button:active, .go:active { transform: translateY(1px); filter: brightness(.95); }
-  .orders button[aria-pressed="true"], .sys button[aria-pressed="true"], .peace button[aria-pressed="true"] {
+  .orders button[aria-pressed="true"], .sys button[aria-pressed="true"], .peace button[aria-pressed="true"], .tabs button[aria-pressed="true"] {
     filter: brightness(.9); box-shadow: inset 0 2px 5px rgba(0, 0, 0, .7), 0 0 0 1px var(--brass-hi), 0 0 0 2px rgba(0, 0, 0, .55), 0 0 8px rgba(240, 214, 138, .3);
   }
   button:disabled { opacity: .5; cursor: var(--cur); filter: grayscale(.4); }
@@ -111,8 +111,9 @@
     box-shadow: 0 0 0 2px rgba(0, 0, 0, .6), 0 4px 10px rgba(0, 0, 0, .6); }
   #minimap { display: block; width: 150px; height: 150px; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .6); cursor: crosshair; }
   .army { display: flex; flex-direction: column; gap: 8px; min-width: 0; min-height: 0; }
-  .orders { display: flex; align-items: center; gap: 8px; min-height: 30px; flex-wrap: wrap; }
-  .orders .hint { color: var(--cream-dim); font: 500 15px var(--label); margin-right: 4px; } .orders .hint b { color: var(--cream); font-weight: 700; }
+  .orders { display: flex; align-items: center; gap: 8px; min-height: 30px; flex-wrap: nowrap; overflow: hidden; }
+  .orders > * { flex: none; }
+  .orders .hint { color: var(--cream-dim); font: 500 15px var(--label); margin-right: 4px; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .orders .hint b { color: var(--cream); font-weight: 700; }
   .orders button { padding: 4px 11px; font: 700 15px var(--label); display: inline-flex; align-items: center; gap: 5px; }
   .orders button.cry { color: var(--brass-hi); box-shadow: inset 0 1px 0 rgba(255, 222, 160, .3), inset 0 -2px 0 rgba(0, 0, 0, .45), 0 0 0 1px var(--brass), 0 0 0 2px rgba(0, 0, 0, .55), 0 0 8px rgba(240, 214, 138, .2); }
   .orders .idle { margin-left: auto; }
@@ -175,6 +176,11 @@
   .chip svg { color: var(--ink); } .chip em { font: italic 400 14px var(--body); color: var(--ink-soft); }
   .chip .mor { display: inline-block; width: 40px; height: 5px; background: var(--walnut-deep); overflow: hidden; } .chip .mor > i { display: block; height: 100%; }
   .buildmenu { display: flex; gap: 8px; flex-wrap: wrap; }
+  .tabs { display: inline-flex; gap: 6px; margin-left: auto; }
+  .tabs button { padding: 2px 11px; font: 700 14px var(--label); }
+  .tabs button[aria-pressed="true"] { color: var(--brass-hi); }
+  .cost em { font: italic 12px var(--body); color: var(--cream-dim); }
+  .chips { align-items: center; }
   #citypanel .hint { color: var(--ink-soft); font-style: italic; }
   .hint.big { font: italic 16px/1.45 var(--body); margin: 4px 0 0; max-width: 80ch; }
 
@@ -258,7 +264,7 @@
     <div class="sys"><span id="fps"></span><span class="groove" id="clock">0:00</span><button type="button" id="speed" title="Скорость (+ / −)">×1</button><button type="button" id="pause" title="Пауза (P)" aria-label="Пауза"></button><button type="button" id="mute" title="Звук (M)" aria-label="Звук" aria-pressed="false"></button><button type="button" id="helpbtn" title="Управление" aria-label="Управление" aria-pressed="false"></button></div>
   </header>
   <div id="feed"></div>
-<div class="help" id="help" hidden><b>ЛКМ</b> выбрать, рамкой — несколько<br><b>ПКМ</b> идти · по врагу — атака<br><b>ПКМ + тянуть</b> — выстроить линию<br><b>Двойной ПКМ</b> — бегом<br><b>F</b> строй · <b>H</b> стоп · <b>G</b> качып атуу<br><b>R</b> стрельба / рукопашная · <b>V</b> клич<br><b>WASD</b>, колесо, <b>Q/E</b> — камера<br><b>Ctrl+1…9</b> группа · <b>P</b> пауза · <b>M</b> звук<br><b>Город:</b> ПКМ деҳқонами по лесу, камню, золоту, полю — добывать<br><b>U</b> офицер собирает / распускает отряд · <b>.</b> свободный работник<br><b>K</b> свернуть юрту / поставить арбу · <b>Shift+K</b> свернуть весь лагерь</div>
+<div class="help" id="help" hidden><b>ЛКМ</b> выбрать, рамкой — несколько<br><b>ПКМ</b> идти · по врагу — атака<br><b>ПКМ + тянуть</b> — выстроить линию<br><b>Двойной ПКМ</b> — бегом<br><b>F</b> строй · <b>H</b> стоп · <b>G</b> качып атуу<br><b>R</b> стрельба / рукопашная · <b>V</b> клич<br><b>WASD</b>, колесо, <b>Q/E</b> — камера<br><b>Ctrl+1…9</b> группа · <b>P</b> пауза · <b>M</b> звук<br><b>Город:</b> ПКМ деҳқонами по лесу, камню, золоту, полю — добывать<br><b>U</b> офицер собирает / распускает отряд · <b>.</b> свободный работник<br><b>K</b> свернуть юрту / поставить арбу · <b>Shift+K</b> свернуть весь лагерь<br><b>Стены:</b> работники → «Укрепления» → ЛКМ начало, ЛКМ конец · <b>ПКМ воинами по башне</b> — наверх</div>
   <footer class="bottom">
     <div class="mini"><div class="frame"><canvas id="minimap" width="180" height="180" title="Клик — камера, правый клик — отправить выбранных"></canvas></div></div>
     <div class="army"><div class="orders" id="orders"></div><div class="sheet"><div class="cards" id="cards"></div><div id="citypanel"></div></div></div>

@@ -3,6 +3,7 @@
 // a yuzboshi (officer) can merge up to 100 solos of one type into a real formation.
 import { TYPES, FACTIONS, FORMATIONS, slotLocal, defaultFormation } from './units.js';
 import { groundY, terrainSpeed, HALF, SIZE, rng } from './world.js';
+import { Nav } from './nav.js';
 
 const CELL = 8, GW = Math.ceil(SIZE / CELL);
 const TAU = Math.PI * 2;
@@ -15,7 +16,12 @@ export const tiredK = (st) => (st >= 30 ? 1 : 0.55 + (0.45 * st) / 30); // speed
 export const CRY_COOLDOWN = 75;
 export const MAX_SQUAD = 100;
 const AURA = 90; // commander morale aura, m
-const VS_BUILDING = { musket: 0.3, arrow: 0.12, ball: 3, melee: 0.35 };
+const VS_BUILDING = { musket: 0.3, arrow: 0.12, ball: 3, melee: 0.35, stone: 0.05 };
+// Up in a tower: bows and muskets reach further and the walls take part of every hit.
+const TOWER_RANGE = 1.3, TOWER_COVER = 0.45;
+// What swordsmen and spearmen do from a tower: throw stones on the heads below.
+const STONES = { kind: 'stone', range: 32, reload: 3.2, dmg: 11, acc: [0.75, 0.35] };
+export const canGarrison = (T) => !T.mounted && !T.artillery && !T.wagon && !T.worker;
 
 // Closest point of an axis-aligned building rectangle to (x, z).
 export const edgePoint = (b, x, z) => [Math.max(b.x - b.w / 2, Math.min(b.x + b.w / 2, x)), Math.max(b.z - b.d / 2, Math.min(b.z + b.d / 2, z))];
@@ -38,6 +44,8 @@ export class Sim {
     this.mode = mode;
     this.time = 0;
     this.soldiers = []; this.squads = []; this.projectiles = []; this.events = []; this.buildings = [];
+    this.bver = 0; // bumped whenever a building appears or goes, so the walk grid can catch up
+    this.nav = mode === 'city' ? new Nav(this) : null;
     this.result = null;
     this.teams = factions.map((key, id) => ({ id, key, faction: FACTIONS[key], initial: 0, alive: 0, kills: 0, losses: 0, routT: 0, cmd: null, cmdDead: false, cryReady: 15 }));
     if (mode === 'battle') this.teams.forEach((tm) => {
@@ -162,7 +170,7 @@ export class Sim {
   nearestEnemy(s, r, skipWorkers = false) {
     let best = null, bd = r * r;
     this.forNear(s.x, s.z, r, (o) => {
-      if (o.team === s.team || !o.alive || (skipWorkers && o.T.civil)) return;
+      if (o.team === s.team || !o.alive || o.inB || (skipWorkers && o.T.civil)) return;
       const d = (o.x - s.x) ** 2 + (o.z - s.z) ** 2;
       if (d < bd) { bd = d; best = o; }
     });
@@ -172,7 +180,13 @@ export class Sim {
   // ---------- commands (player and AI) ----------
   order(sq, o) {
     if (sq.dead || sq.state === 'rout') return;
-    sq.order = o;
+    if (sq.garrison) {
+      // archers in a tower keep their place and only take the new target
+      if (o.kind === 'attack' && this.shoots(sq)) { sq.prefTarget = o.target; return; }
+      if (o.kind === 'garrison' && o.b === sq.garrison) return;
+      this.leaveTower(sq);
+    }
+    sq.order = o; sq.path = null;
     if (o.kind === 'move') sq.files = o.files ?? sq.files;
   }
   shoots(sq) { return !!sq.T.ranged && !sq.meleeMode; }
@@ -200,6 +214,7 @@ export class Sim {
     if (this.result) return;
     this.time += dt;
     this.rebuildGrid();
+    if (this.nav) { this.nav.sync(); this.pathBudget = 6; }
     for (const sq of this.squads) if (!sq.dead) this.updateSquad(sq, dt);
     for (const sq of this.squads) { sq.engaged = 0; sq.errSum = 0; }
     for (const s of this.soldiers) if (s.alive) this.updateSoldier(s, dt);
@@ -217,6 +232,7 @@ export class Sim {
     const shoots = this.shoots(sq);
     const cmd = tm.cmd;
     sq.aura = !!(cmd && cmd.alive && Math.hypot(cmd.x - sq.mx, cmd.z - sq.mz) < AURA);
+    if (sq.garrison && this.holdTower(sq, shoots)) return;
 
     // nearest enemy squad, and the nearest thing a skirmisher should back away from
     let near = null, nd = Infinity, threat = null, td = Infinity;
@@ -259,6 +275,7 @@ export class Sim {
     } else if (o.kind === 'attack') {
       const tg = o.target;
       if (!tg || tg.dead || (tg.state === 'rout' && Math.hypot(tg.mx - sq.mx, tg.mz - sq.mz) > 120)) sq.order = { kind: 'idle', face: sq.face };
+      else if (tg.garrison && !shoots) sq.order = { kind: 'attackB', b: tg.garrison }; // nobody climbs a tower: break it
       else {
         const dx = tg.mx - sq.mx, dz = tg.mz - sq.mz, d = Math.hypot(dx, dz);
         faceGoal = Math.atan2(dx, dz);
@@ -271,7 +288,7 @@ export class Sim {
       }
     } else if (o.kind === 'attackB') {
       const b = o.b;
-      if (!b || b.dead) sq.order = { kind: 'idle', face: sq.face };
+      if (!b || b.dead) { sq.order = o.resume && !o.resume.target?.dead ? o.resume : { kind: 'idle', face: sq.face }; sq.path = null; }
       else {
         const [ex, ez] = edgePoint(b, sq.mx, sq.mz), dx = ex - sq.mx, dz = ez - sq.mz, d = Math.hypot(dx, dz) || 1;
         faceGoal = Math.atan2(b.x - sq.mx, b.z - sq.mz);
@@ -283,7 +300,15 @@ export class Sim {
         else { gx = sq.cx; gz = sq.cz; }
       }
     }
-    if (sq.state !== 'rout' && sq.order.kind !== 'attack' && !T.civil) {
+    else if (o.kind === 'garrison') {
+      const b = o.b;
+      if (!b || b.dead || !b.done || b.team !== sq.team) sq.order = { kind: 'idle', face: sq.face };
+      else {
+        gx = b.x; gz = b.z + b.d / 2 + 2; faceGoal = Math.PI;
+        if (Math.hypot(sq.mx - gx, sq.mz - gz) < (sq.solo ? 3.5 : 7)) { this.enterTower(sq, b); return; }
+      }
+    }
+    if (sq.state !== 'rout' && sq.order.kind !== 'attack' && sq.order.kind !== 'garrison' && !T.civil) {
       if (shoots && near && nd <= T.ranged.range && nd >= (T.ranged.minRange || 0)) sq.fireTarget = near;
       else if (!shoots && T.melee && near && sq.order.kind === 'idle' && nd < (T.mounted ? 70 : 40)) sq.order = { kind: 'attack', target: near, auto: true };
     }
@@ -308,6 +333,12 @@ export class Sim {
     }
     sq.running = running;
 
+    // city: follow a path round walls and buildings; break through an enemy wall when there is no way round
+    if (this.nav && !sq.kiting && sq.state !== 'rout') {
+      const w = this.route(sq, gx, gz);
+      if (w === 'breach') { const q = sq.path; sq.order = { kind: 'attackB', b: q.breach, resume: sq.order.breach ? sq.order.resume : sq.order }; sq.order.breach = true; sq.path = null; }
+      else if (w) { gx = w[0]; gz = w[1]; }
+    }
     sq.aimX = gx; sq.aimZ = gz; // solo units steer around buildings towards this
     // keep the centre with the fight once soldiers are engaged
     if (sq.solo || sq.lastEngaged > al.length * 0.25) {
@@ -328,11 +359,102 @@ export class Sim {
     sq.face = turn(sq.face, faceGoal, (T.mounted ? 2 : 1.1) * dt);
   }
 
-  detour(x, z, gx, gz, rad) {
+  route(sq, gx, gz) {
+    if (Math.hypot(gx - sq.cx, gz - sq.cz) < 5) { sq.path = null; return null; }
+    let p = sq.path;
+    if ((!p || Math.hypot(p.gx - gx, p.gz - gz) > 10 || this.time > p.t + 4) && this.pathBudget > 0) {
+      this.pathBudget--;
+      const r = this.nav.find(sq.cx, sq.cz, gx, gz, sq.team);
+      p = sq.path = { gx, gz, t: this.time + this.rand(), pts: r?.pts || null, i: 0, breach: r?.breach || null, at: r ? r.at : -1 };
+    }
+    if (!p || !p.pts) return null;
+    const reach = sq.solo ? 2.5 : 5;
+    while (p.i < p.pts.length - 1 && p.i !== p.at && Math.hypot(p.pts[p.i][0] - sq.cx, p.pts[p.i][1] - sq.cz) < reach) p.i++;
+    if (p.breach && p.i === p.at && !p.breach.dead && Math.hypot(p.pts[p.at][0] - sq.cx, p.pts[p.at][1] - sq.cz) < reach + 4) return 'breach';
+    return p.pts[p.i];
+  }
+
+  // ---------- towers ----------
+  towerSlot(b, k) {
+    const r = Math.min(b.w, b.d) * 0.26, a = (k / b.T.cap) * TAU + 0.4;
+    return [b.x + Math.cos(a) * r, b.z + Math.sin(a) * r];
+  }
+  garrisonOf(b) { return (b.garrison || []).filter((s) => s.alive && s.inB === b); }
+  placeGarrison(b) {
+    b.garrison = this.garrisonOf(b);
+    b.garrison.forEach((s, k) => { const [x, z] = this.towerSlot(b, k); s.x = x; s.z = z; s.y = b.y + b.T.top; s.vx = 0; s.vz = 0; });
+  }
+  enterTower(sq, b) {
+    const free = b.T.cap - this.garrisonOf(b).length;
+    sq.order = { kind: 'idle', face: sq.face }; sq.path = null;
+    if (!canGarrison(sq.T)) return false;
+    if (sq.alive.length > free) { this.events.push({ k: 'towerFull', b, team: sq.team, free }); return false; }
+    b.garrison = this.garrisonOf(b);
+    for (const s of sq.alive) { s.inB = b; b.garrison.push(s); }
+    this.placeGarrison(b);
+    sq.garrison = b; sq.prefTarget = null; sq.cx = b.x; sq.cz = b.z;
+    this.events.push({ k: 'garrison', b, sq });
+    return true;
+  }
+  leaveTower(sq, hurt = 0) {
+    const b = sq.garrison; if (!b) return;
+    sq.garrison = null; sq.prefTarget = null;
+    sq.alive.forEach((s, k) => {
+      s.inB = null;
+      s.x = b.x + ((k % 4) - 1.5) * 1.6; s.z = b.z + b.d / 2 + 1.6 + Math.floor(k / 4) * 1.6; s.y = groundY(s.x, s.z);
+    });
+    if (hurt) for (const s of [...sq.alive]) this.hurt(s, s.T.hp * hurt, null);
+    if (!b.dead) this.placeGarrison(b);
+    sq.cx = b.x; sq.cz = b.z + b.d / 2 + 3;
+  }
+  ungarrisonAll(b) { for (const q of this.squads) if (q.garrison === b && !q.dead) this.leaveTower(q); }
+  // a squad up in a tower: pick something within reach and keep the place; false when it has to come down
+  holdTower(sq, shoots) {
+    const b = sq.garrison;
+    if (b.dead) { this.leaveTower(sq, 0.3); return false; }
+    sq.state = 'idle'; sq.morale = Math.max(sq.morale, 60); sq.moving = false; sq.running = false; sq.kiting = false;
+    sq.cx = b.x; sq.cz = b.z; sq.fireB = null;
+    const R = shoots ? sq.T.ranged.range * TOWER_RANGE : STONES.range;
+    let tg = sq.prefTarget && !sq.prefTarget.dead && Math.hypot(sq.prefTarget.mx - b.x, sq.prefTarget.mz - b.z) < R + 6 ? sq.prefTarget : null;
+    if (!tg) {
+      let bd = R + 6;
+      for (const q of this.squads) {
+        if (q.dead || q.team === sq.team || q.garrison === b) continue;
+        const d = Math.hypot(q.mx - b.x, q.mz - b.z);
+        if (d < bd) { bd = d; tg = q; }
+      }
+    }
+    sq.fireTarget = tg; sq.near = tg; sq.nearD = tg ? Math.hypot(tg.mx - b.x, tg.mz - b.z) : Infinity;
+    if (tg) sq.face = Math.atan2(tg.mx - b.x, tg.mz - b.z);
+    return true;
+  }
+  towerSoldier(s, dt) {
+    const sq = s.sq, T = s.T, b = s.inB, shoots = this.shoots(sq) && !!T.ranged;
+    s.y = b.y + b.T.top; s.vx = 0; s.vz = 0; s.speed = 0; s.target = null;
+    s.stam = Math.min(100, s.stam + 5 * dt);
+    if (T.ranged?.ammo != null) s.ammo = Math.min(T.ranged.ammo, s.ammo + dt * 0.12); // the tower keeps a store of arrows
+    const R = shoots ? T.ranged : STONES, range = shoots ? R.range * TOWER_RANGE : R.range;
+    s.reload -= dt;
+    const ft = sq.fireTarget;
+    if (ft && s.reload <= 0) {
+      let tgt = null, d = Infinity;
+      for (let k = 0; k < 3 && ft.alive.length; k++) {
+        const c = ft.alive[Math.floor(this.rand() * ft.alive.length)], dc = Math.hypot(c.x - s.x, c.z - s.z);
+        if (dc < d) { d = dc; tgt = c; }
+      }
+      if (tgt && d <= range) {
+        this.fireAt(s, tgt, null, tgt.x, tgt.z, d, R, shoots ? TOWER_RANGE : 1);
+        s.reload = R.reload * (0.9 + this.rand() * 0.2);
+      } else s.reload = 0.5;
+    }
+    if (ft) s.yaw = turn(s.yaw, Math.atan2(ft.mx - s.x, ft.mz - s.z), 5 * dt);
+  }
+
+  detour(x, z, gx, gz, rad, team) {
     if (Math.hypot(gx - x, gz - z) < 1) return null;
     let hit = null, ht = 1;
     for (const b of this.buildings) {
-      if (b.walk || b.dead) continue;
+      if (b.walk || b.dead || (b.T.gate && b.team === team)) continue;
       const hw = b.w / 2 + rad * 0.6 + 0.3, hd = b.d / 2 + rad * 0.6 + 0.3;
       if (Math.abs(gx - b.x) < hw && Math.abs(gz - b.z) < hd) continue; // heading to this very building
       const t = segBox(x - b.x, z - b.z, gx - x, gz - z, hw, hd);
@@ -353,6 +475,7 @@ export class Sim {
   }
 
   updateSoldier(s, dt) {
+    if (s.inB) { this.towerSoldier(s, dt); return; }
     const sq = s.sq, T = s.T, n = sq.alive.length, shoots = this.shoots(sq) && !!T.ranged;
     const [lx, lz] = slotLocal(sq, s.slot, n), [fx, fz] = fwdOf(sq.face), [rx, rz] = rightOf(sq.face);
     let gx = sq.cx + rx * lx + fx * lz, gz = sq.cz + rz * lx + fz * lz;
@@ -399,7 +522,7 @@ export class Sim {
     // no pathfinding yet: walk around a building in the way by its nearest free corner
     const rad = T.mounted ? 2.1 : T.artillery ? 2.4 : 0.95;
     if (this.mode === 'city' && !stand && !foe) {
-      const far = sq.solo && sq.aimX != null, w = this.detour(s.x, s.z, far ? sq.aimX : gx, far ? sq.aimZ : gz, rad);
+      const far = sq.solo && sq.aimX != null, w = this.detour(s.x, s.z, far ? sq.aimX : gx, far ? sq.aimZ : gz, rad, s.team);
       if (w) { gx = w[0]; gz = w[1]; }
     }
 
@@ -427,7 +550,7 @@ export class Sim {
     s.z = Math.max(-HALF + 2, Math.min(HALF - 2, s.z + s.vz * dt));
     // buildings are solid: slide out of their footprint
     for (const b of this.buildings) {
-      if (b.walk || b.dead) continue;
+      if (b.walk || b.dead || (b.T.gate && b.team === s.team)) continue;
       const hw = b.w / 2 + rad * 0.6, hd = b.d / 2 + rad * 0.6, ox = s.x - b.x, oz = s.z - b.z;
       if (Math.abs(ox) < hw && Math.abs(oz) < hd) {
         const px2 = hw - Math.abs(ox), pz2 = hd - Math.abs(oz);
@@ -478,8 +601,8 @@ export class Sim {
     this.hurtBuilding(b, s.T.melee.dmg * VS_BUILDING.melee, s);
   }
 
-  fireAt(s, tgt, b, tx0, tz0, d) {
-    const R = s.T.ranged, u = Math.min(1, d / R.range);
+  fireAt(s, tgt, b, tx0, tz0, d, R = s.T.ranged, reachK = 1) {
+    const u = Math.min(1, d / (R.range * reachK));
     let acc = R.acc[0] + (R.acc[1] - R.acc[0]) * u;
     if (tgt?.T.mounted) acc *= 1.1;
     if (b) acc = 1;
@@ -488,12 +611,13 @@ export class Sim {
       const hit = this.rand() < acc;
       if (hit) { if (b) this.hurtBuilding(b, R.dmg * VS_BUILDING.musket, s); else this.hurt(tgt, Math.max(1, R.dmg * (0.8 + this.rand() * 0.4) - tgt.T.armor), s); }
       this.events.push({ k: 'musket', x: s.x, y: s.y, z: s.z, yaw: s.yaw, team: s.team });
-    } else if (R.kind === 'arrow') {
+    } else if (R.kind === 'arrow' || R.kind === 'stone') {
       const hit = this.rand() < acc, miss = hit ? 0 : 2 + this.rand() * 5, a = this.rand() * 6.283;
       const tx = tx0 + Math.cos(a) * miss + (tgt ? tgt.vx * 0.6 : 0), tz = tz0 + Math.sin(a) * miss + (tgt ? tgt.vz * 0.6 : 0);
-      this.projectiles.push({ k: 'arrow', team: s.team, src: s, tgt, b, hit, dmg: R.dmg, t: 0, T: d / 38 + 0.25,
-        x0: s.x, y0: s.y + (s.T.mounted ? 2.2 : 1.5), z0: s.z, x1: tx, y1: groundY(tx, tz) + (hit ? 1.2 : 0), z1: tz, arc: d * 0.12 });
-      this.events.push({ k: 'shot', team: s.team, x: s.x, z: s.z });
+      const stone = R.kind === 'stone', y1 = hit && tgt ? tgt.y + 1.2 : groundY(tx, tz) + (hit ? 1.2 : 0);
+      this.projectiles.push({ k: R.kind, team: s.team, src: s, tgt, b, hit, dmg: R.dmg, t: 0, T: stone ? d / 22 + 0.3 : d / 38 + 0.25,
+        x0: s.x, y0: s.y + (s.T.mounted ? 2.2 : 1.5), z0: s.z, x1: tx, y1, z1: tz, arc: d * (stone ? 0.05 : 0.12) });
+      if (!stone) this.events.push({ k: 'shot', team: s.team, x: s.x, z: s.z });
     } else {
       const spread = d * (1 - acc) * 0.12, a = this.rand() * 6.283, r = Math.sqrt(this.rand()) * spread;
       const tx = tx0 + Math.cos(a) * r, tz = tz0 + Math.sin(a) * r;
@@ -508,8 +632,8 @@ export class Sim {
     for (const p of this.projectiles) {
       p.t += dt;
       if (p.t < p.T) { keep.push(p); continue; }
-      if (p.k === 'arrow') {
-        if (p.b) { if (!p.b.dead) this.hurtBuilding(p.b, p.dmg * VS_BUILDING.arrow, p.src); }
+      if (p.k === 'arrow' || p.k === 'stone') {
+        if (p.b) { if (!p.b.dead) this.hurtBuilding(p.b, p.dmg * VS_BUILDING[p.k], p.src); }
         else if (p.hit && p.tgt.alive) this.hurt(p.tgt, Math.max(1, p.dmg * (0.8 + this.rand() * 0.4) * (p.tgt.T.shield ? 0.55 : 1) - p.tgt.T.armor * 0.5), p.src);
         continue;
       }
@@ -530,13 +654,14 @@ export class Sim {
 
   hurt(t, dmg, by) {
     if (!t.alive) return;
+    if (t.inB) dmg *= TOWER_COVER;
     t.hp -= dmg; t.sq.lastHit = this.time;
     if (t.hp <= 0) this.kill(t, by);
   }
   hurtBuilding(b, dmg, by) {
     if (b.dead) return;
     b.hp -= dmg; b.lastHit = this.time;
-    if (b.hp <= 0) { b.hp = 0; b.dead = true; this.events.push({ k: 'bdead', b, by: by?.team }); }
+    if (b.hp <= 0) { b.hp = 0; b.dead = true; this.bver++; this.events.push({ k: 'bdead', b, by: by?.team }); }
   }
 
   kill(s, by) {

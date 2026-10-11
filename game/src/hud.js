@@ -130,6 +130,8 @@ export class HUD {
       if (e.k === 'cry') this.say(e.team === this.input.team ? 'Боевой клич! Дух и силы отрядов рядом с командиром выросли' : 'Враг поднял боевой клич', e.team === this.input.team ? 'good' : 'bad');
       if (e.k === 'cmdDead') this.say(e.team === this.input.team ? `Наш ${e.name.toLowerCase()} погиб! Мораль армии падает` : `Вражеский ${e.name.toLowerCase()} убит!`, e.team === this.input.team ? 'bad' : 'good');
       if (e.k === 'formed') this.say(`Юзбоши собрал отряд: ${e.sq.T.name}, ${e.sq.alive.length} человек`, 'good');
+      if (e.k === 'towerFull' && e.team === this.input.team) this.say(e.free ? `В башне ${e.free} свободных мест: отряд целиком не поместится` : `${e.b.T.name}: мест больше нет`, 'bad');
+      if (e.k === 'garrison' && e.sq.team === this.input.team && !e.sq.solo) this.say(`${e.sq.T.name} поднялись на башню`, 'good');
       if (e.k === 'officerDead') this.say(e.sq.team === this.input.team ? `Юзбоши погиб, отряд «${e.sq.T.name}» дрогнул` : 'Вражеский офицер убит', e.sq.team === this.input.team ? 'bad' : 'good');
       if (e.k === 'end') this.showEnd(e.result);
     }

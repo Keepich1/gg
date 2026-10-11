@@ -40,6 +40,12 @@ export class RaidAI {
       eco.addBuilding(1, 'dala', x - 40, z + 48, true); eco.addBuilding(1, 'dala', x + 40, z + 48, true);
       this.garrison = [sim.addSquad(1, 'sarbaz', x - 26, z + 44, 0, { count: 40 }), sim.addSquad(1, 'naizachi', x + 26, z + 44, 0, { count: 40 }), sim.addSquad(1, 'xos', x, z + 26, 0, { count: 12 })];
     }
+    // two towers in front of the base with archers on top
+    const [tk, ak, ac] = this.fac === 'kipchak' ? ['munara', 'mergen', 5] : ['burj', 'kamonchi', 8];
+    for (const sx of [-1, 1]) {
+      const t = eco.addBuilding(1, tk, x + sx * 48, z + 70, true), q = sim.addSquad(1, ak, t.x, t.z + 8, 0, { count: ac });
+      sim.enterTower(q, t);
+    }
     this.home = new Map(this.garrison.map((q) => [q, [q.cx, q.cz]]));
   }
 
@@ -78,7 +84,7 @@ export class RaidAI {
   pickTarget(sq) {
     let best = null, bs = -Infinity;
     for (const b of this.sim.buildings) {
-      if (b.team !== 0 || b.dead) continue;
+      if (b.team !== 0 || b.dead || b.T.seg || b.T.gate) continue; // walls are broken on the way, not hunted
       let s = -Math.hypot(b.x - sq.mx, b.z - sq.mz) + (PREY[b.key] || 0);
       if (b.T.main) s -= sq.T.mounted ? 120 : 0;
       if (s > bs) { bs = s; best = b; }

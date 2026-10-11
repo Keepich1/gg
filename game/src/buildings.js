@@ -32,9 +32,29 @@ export const BUILDINGS = {
   jylky: { key: 'jylky', name: 'Жылкы короосу', sub: 'конный двор: атчан жаачылар, чабуулчулар, сайыскерлер', w: 16, d: 12, hp: 700, pack: true, trains: ['atchan', 'chabuul', 'saiyskar', 'juzbashy'], cost: { wood: 150, gold: 40 }, time: 30 },
   kurultai: { key: 'kurultai', name: 'Курултай', sub: 'совет родов: батырлар', w: 14, d: 14, hp: 900, pack: true, trains: ['batyr'], cost: { wood: 200, gold: 150 }, time: 45 },
 };
+
+// ---------------- Укрепления ----------------
+// A wall is laid as a chain of short pieces (`seg`), each `len` long along the line and `thick` across it.
+// A gate lets its owner through and stops the enemy; a tower holds up to `cap` foot soldiers at height `top`.
+Object.assign(BUILDINGS, {
+  devor: { key: 'devor', name: 'Пахса девор', sub: 'глинобитная стена: дёшево, держит пехоту и конницу', wall: true, seg: true, len: 3.6, thick: 1.8, hp: 420, cost: { wood: 3 }, time: 4 },
+  tosh: { key: 'tosh', name: 'Тош девор', sub: 'каменная стена: втрое крепче глиняной', wall: true, seg: true, len: 3.6, thick: 2.2, hp: 1200, cost: { stone: 8 }, time: 7 },
+  darvoza: { key: 'darvoza', name: 'Дарвоза', sub: 'ворота: свои проходят, чужие ломают. Ставьте на стену', gate: true, len: 7.2, thick: 3, hp: 1600, cost: { wood: 40, stone: 30 }, time: 25 },
+  burj: { key: 'burj', name: 'Бурж', sub: 'башня на 10 пеших воинов: лучники и мушкеты бьют дальше, стены укрывают', tower: true, w: 7, d: 7, hp: 2000, cap: 10, top: 8.4, cost: { stone: 80, wood: 30 }, time: 35 },
+  chep: { key: 'chep', name: 'Жыгач чеп', sub: 'частокол из брёвен: быстро и дёшево, но слабее глины', wall: true, seg: true, len: 3.4, thick: 1.2, hp: 260, cost: { wood: 5 }, time: 3 },
+  darbaza: { key: 'darbaza', name: 'Дарбаза', sub: 'ворота в частоколе. Ставьте на частокол', gate: true, len: 6.4, thick: 2.4, hp: 700, cost: { wood: 45 }, time: 14 },
+  munara: { key: 'munara', name: 'Күзөт мунарасы', sub: 'дозорная вышка на 6 пеших воинов; сворачивается в арбу', tower: true, w: 5, d: 5, hp: 700, cap: 6, top: 7, pack: true, cost: { wood: 70 }, time: 18 },
+});
+// Axis-aligned box of a piece turned by `ang` (rotation about the vertical, 0 = along x).
+export const footprint = (T, ang = 0) => {
+  if (!T.len) return [T.w, T.d];
+  const c = Math.abs(Math.cos(ang)), s = Math.abs(Math.sin(ang));
+  return [T.len * c + T.thick * s, T.len * s + T.thick * c];
+};
 export const MAIN = { kokand: 'urda', kipchak: 'ordo' };
 export const BUILD_MENU = {
   kokand: ['uy', 'dala', 'tegirmon', 'ombor', 'kazarma', 'otxona', 'topxona'],
   kipchak: ['boz', 'koroo', 'ken', 'jooker', 'jylky', 'kurultai'],
 };
+export const FORT_MENU = { kokand: ['devor', 'tosh', 'darvoza', 'burj'], kipchak: ['chep', 'darbaza', 'munara'] };
 export const costText = (c) => Object.entries(c).map(([k, v]) => `${v} ${RES_NAMES[k].toLowerCase()}`).join(', ');
